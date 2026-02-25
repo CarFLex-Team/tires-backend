@@ -4,7 +4,10 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "server": "git+https://github.com/CarFLex-Team/tires-backend.git"
+    "server": "git+https://github.com/CarFLex-Team/tires-backend.git",
+  
+    "dev": "nodemon src/server.ts"
+    
   },
   "repository": {
     "type": "git",
@@ -23,7 +26,8 @@
     "dotenv": "^17.3.1",
     "express": "^5.2.1",
     "morgan": "^1.10.1",
-    "pg": "^8.18.0"
+    "pg": "^8.18.0",
+     "ts-node": "^10.9.2"
   },
   "devDependencies": {
     "@types/cors": "^2.8.19",
