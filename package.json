@@ -5,6 +5,7 @@
   "main": "index.js",
   "scripts": {
     "server": "git+https://github.com/CarFLex-Team/tires-backend.git",
+    "start":"ts-node src/customers/server.ts",
   
     "dev": "nodemon src/server.ts"
     
