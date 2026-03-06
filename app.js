@@ -2,10 +2,9 @@ const express = require('express');
 const cors = require('cors');
 const dotenv = require('dotenv');
 
-const customerRoutes = require('./routes/customers');
+const customerRoutes = require('./routes/customer');
 const servicesRoute = require('./routes/service');
-const feedRoute = require('./routes/feed');
-const transactionRoute = require('./routes/transactions');
+const transactionRoute = require('./routes/transaction');
 const inventoryRoute = require('./routes/inventory');
 const invoiceRoute = require('./routes/invoice');
 
@@ -21,7 +20,6 @@ app.get('/api/health', (_req, res) => res.status(200).json({ status: 'OK' }));
 
 // Routes
 app.use('/api/customers', customerRoutes);
-app.use('/feed', feedRoute);
 app.use('/api/services', servicesRoute);
 app.use('/api/transaction', transactionRoute);
 app.use('/api/inventory', inventoryRoute);
