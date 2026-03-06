@@ -2,8 +2,12 @@ const express = require('express');
 const cors = require('cors');
 const dotenv = require('dotenv');
 
-const customerRoutes = require('./routes/customer');
-const summaryRoutes = require('./routes/summary');
+const customerRoutes = require('./routes/customers');
+const servicesRoute = require('./routes/service');
+const feedRoute = require('./routes/feed');
+const transactionRoute = require('./routes/transactions');
+const inventoryRoute = require('./routes/inventory');
+const invoiceRoute = require('./routes/invoice');
 
 dotenv.config();
 const app = express();
@@ -17,7 +21,11 @@ app.get('/api/health', (_req, res) => res.status(200).json({ status: 'OK' }));
 
 // Routes
 app.use('/api/customers', customerRoutes);
-app.use('/api/customers/summary', summaryRoutes);
+app.use('/feed', feedRoute);
+app.use('/api/services', servicesRoute);
+app.use('/api/transaction', transactionRoute);
+app.use('/api/inventory', inventoryRoute);
+app.use('/api/invoice', invoiceRoute);
 
 // 404 handler
 app.use((_req, res) => res.status(404).json({ error: 'Route not found' }));
@@ -29,5 +37,5 @@ app.use((err, _req, res, _next) => {
 });
 
 // Start server
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server running on http://localhost:${PORT}`));
