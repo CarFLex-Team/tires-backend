@@ -7,7 +7,7 @@ const {
     deleteTransaction,
     getTopTransaction,
     getMonthlyTransactions,
-} = require('../controllers/transactions');
+} = require('../controllers/transaction');
 
 
 const router = express.Router();

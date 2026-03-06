@@ -7,7 +7,7 @@ const {
     deletecustomer,
     getTopcustomer,
     getmonthlycustomer,
-} = require('../controllers/customers');
+} = require('../controllers/customer');
 
 
 const router = express.Router();
