@@ -9,19 +9,57 @@ const asyncHandler = (fn) => (req, res, next) =>
  * GET /api/transactions
  * Returns all active transactions
  */
-const getTransactions = asyncHandler(async (req, res) => {
-    const { rows } = await db.query(`
-    SELECT t.*,
-     u.name AS created_by
-    FROM "transaction" t
-    JOIN "user" u
-      ON u.id = t.created_by 
-    WHERE t.deleted_at IS NULL
-    ORDER BY t.amount DESC
-  `);
 
-    res.status(200).json({ success: true, data: rows });
+const getTransactions = asyncHandler(async (req, res) => {
+    const { date, month } = req.query;
+
+    let whereClause = ``;
+    const params = [];
+
+    if (date) {
+        params.push(date);
+        whereClause += `
+      AND t.created_at >= $${params.length}::date
+      AND t.created_at < $${params.length}::date + INTERVAL '1 day'
+    `;
+    } else if (month) {
+        params.push(`${month}-01`);
+        whereClause += `
+      AND t.created_at >= date_trunc('month', $${params.length}::date)
+      AND t.created_at < date_trunc('month', $${params.length}::date) + INTERVAL '1 month'
+    `;
+    } else {
+        const today = new Date().toISOString().slice(0, 10);
+        params.push(today);
+        whereClause += `
+      AND t.created_at >= $${params.length}::date
+      AND t.created_at < $${params.length}::date + INTERVAL '1 day'
+    `;
+    }
+
+    const { rows } = await db.query(
+        `
+    SELECT
+      t.*,
+      s.name AS service_name,
+      p.name AS product_name,
+      u.name AS created_by_name
+    FROM "transaction" t
+    LEFT JOIN "service" s ON t.service_id = s.id
+    LEFT JOIN "product" p ON t.product_id = p.id
+    JOIN "user" u ON t.created_by = u.id
+    WHERE t.deleted_at IS NULL
+      AND t.status = 'finished'
+      ${whereClause}
+    ORDER BY t.created_at DESC
+    `,
+        params
+    );
+
+    res.status(200).json(rows);
 });
+
+
 
 /**
  * GET /api/transactions/:id
