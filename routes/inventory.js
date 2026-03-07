@@ -32,6 +32,6 @@ router.put('/:id', updateInventory);
 router.delete('/:id', deleteInventory);
 
 // Monthly top inventory items
-router.get('/summary/monthly', getMonthlyInventory);
+router.get('/summary/product-monthly', getMonthlyInventory);
 
 module.exports = router;
