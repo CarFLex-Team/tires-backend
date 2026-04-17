@@ -13,7 +13,7 @@ const getServices = asyncHandler(async (req, res) => {
     SELECT *
     FROM "Service"
     WHERE deleted_at IS NULL
-    ORDER BY created_at ASC
+    ORDER BY created_at DESC
   `);
 
     return res.status(200).json(rows);
