@@ -1,38 +1,24 @@
-const express = require('express');
+const express = require("express");
 const {
-    getcustomer,
-    getcustomerById,
-    createcustomer,
-    updatecustomer,
-    deletecustomer,
-    getTopcustomer,
-    getmonthlycustomer,
-} = require('../controllers/customer');
-
+    getCustomers,
+    getCustomerById,
+    createCustomer,
+    //  updateCustomer
+    deleteCustomer,
+    getCustomerSummary,
+    getMonthlyCustomerSummary,
+} = require("../controllers/customer");
 
 const router = express.Router();
 
-// ===== Customer CRUD Routes =====
 
-// GET all customers
-router.get('/', getcustomer);
+router.get("/summary/monthly", getMonthlyCustomerSummary);
+router.get("/summary", getCustomerSummary);
 
-// Top 5 customers by turnover
-router.get('/summary', getTopcustomer);
-
-// GET single customer
-router.get('/:id', getcustomerById);
-
-// CREATE customer
-router.post('/', createcustomer);
-
-// UPDATE customer
-router.put('/:id', updatecustomer);
-
-// SOFT DELETE customer
-router.delete('/:id', deletecustomer);
-
-// Monthly top customers
-router.get('/summary/monthly', getmonthlycustomer);
+router.get("/", getCustomers);
+router.get("/:id", getCustomerById);
+router.post("/", createCustomer);
+// router.put("/:id", updateCustomer);
+router.delete("/:id", deleteCustomer);
 
 module.exports = router;

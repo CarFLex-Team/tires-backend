@@ -1,5 +1,7 @@
 const { db } = require("../config/db");
+const handleTireSet = require("../lib/handleTireSet");
 
+// Async handler to catch errors automatically
 const asyncHandler = (fn) => (req, res, next) =>
     Promise.resolve(fn(req, res, next)).catch(next);
 
@@ -9,15 +11,18 @@ const asyncHandler = (fn) => (req, res, next) =>
  */
 const getInvoices = asyncHandler(async (req, res) => {
     const { rows } = await db.query(`
-        SELECT
-            i.*,
-            c.name AS customer_name
-        FROM "invoice" i
-        LEFT JOIN "customer" c ON c.id = i.customer_id
-        WHERE i.deleted_at IS NULL AND i.status = 'pending'
-        ORDER BY i.created_at DESC
-    `);
-    res.status(200).json({ success: true, data: rows });
+    SELECT
+      i.*,
+      c.name AS customer_name
+    FROM "Invoice" i
+    LEFT JOIN "Customer" c
+      ON c.id = i.customer_id
+    WHERE i.deleted_at IS NULL
+      AND i.status = 'pending'
+    ORDER BY i.created_at DESC
+  `);
+
+    return res.status(200).json(rows);
 });
 
 /**
@@ -33,16 +38,22 @@ const createInvoice = asyncHandler(async (req, res) => {
         payment_method,
         status,
         transactions,
-        created_by = null, // Allow passing creator or leave null
     } = req.body;
 
+    const created_by = req.user?.id;
+
+    if (!created_by) {
+        return res.status(401).json({ error: "Unauthorized" });
+    }
+
     if (
-        !customer_id ||
-        !subtotal ||
+        customer_id == null ||
+        subtotal == null ||
         !status ||
-        !Array.isArray(transactions)
+        !Array.isArray(transactions) ||
+        transactions.length === 0
     ) {
-        return res.status(400).json({ success: false, error: "Invalid payload" });
+        return res.status(400).json({ error: "Invalid payload" });
     }
 
     const client = await db.connect();
@@ -50,67 +61,128 @@ const createInvoice = asyncHandler(async (req, res) => {
     try {
         await client.query("BEGIN");
 
+        // 1) Create invoice
         const invoiceRes = await client.query(
             `
-            INSERT INTO "invoice" 
-            (customer_id, created_by, total_amount, subtotal, tax, created_at, payment_method, status)
-            VALUES ($1, $2, $3, $4, $5, NOW(), $6, $7)
-            RETURNING id
-            `,
-            [customer_id, created_by, total || null, subtotal, tax || null, payment_method || null, status]
+      INSERT INTO "Invoice"
+        (customer_id, created_by, total_amount, subtotal, tax, created_at, payment_method, status)
+      VALUES
+        ($1, $2, $3, $4, $5, NOW(), $6, $7)
+      RETURNING id
+      `,
+            [
+                customer_id,
+                created_by,
+                total ?? null,
+                subtotal,
+                tax ?? null,
+                payment_method ?? null,
+                status,
+            ]
         );
 
         const invoiceId = invoiceRes.rows[0].id;
 
+        // 2) Create transactions and apply side effects
         for (const tx of transactions) {
             if (tx.category === "Tire") {
                 await client.query(
                     `
-                    INSERT INTO "transaction" 
-                    (invoice_id, amount, description, created_at, type, category, created_by, payment_method, product_id, quantity, status)
-                    VALUES ($1,$2,$3,NOW(),$4,$5,$6,$7,$8,$9,$10)
-                    `,
-                    [invoiceId, tx.amount, tx.description, tx.type, tx.category, created_by, payment_method || null, tx.product_id, tx.quantity, status]
+          INSERT INTO "Transaction"
+            (invoice_id, amount, description, created_at, type, category, created_by, payment_method, product_id, quantity, status)
+          VALUES
+            ($1, $2, $3, NOW(), $4, $5, $6, $7, $8, $9, $10)
+          `,
+                    [
+                        invoiceId,
+                        tx.amount,
+                        tx.description,
+                        tx.type,
+                        tx.category,
+                        created_by,
+                        payment_method ?? null,
+                        tx.product_id,
+                        tx.quantity,
+                        status,
+                    ]
                 );
 
-                await client.query(
+                const { rows: updatedInventoryRows, rowCount } = await client.query(
                     `
-                    UPDATE "inventory" i
-                    SET quantity = quantity - $1
-                    FROM "product" p
-                    WHERE p.id = $2
-                        AND i.product_id = p.id
-                        AND p.deleted_at IS NULL
-                        AND i.quantity >= $1
-                    `,
+          UPDATE "Inventory" i
+          SET quantity = quantity - $1
+          FROM "Product" p
+          WHERE p.id = $2
+            AND i.product_id = p.id
+            AND p.deleted_at IS NULL
+            AND i.quantity >= $1
+          RETURNING p.id, i.quantity, p.price, p.cost, p.size
+          `,
                     [tx.quantity, tx.product_id]
                 );
 
+                if (rowCount === 0) {
+                    throw new Error(
+                        `Insufficient inventory or invalid product for product_id ${tx.product_id}`
+                    );
+                }
+
                 await client.query(
                     `
-                    INSERT INTO "inventory_movement" (product_id, quantity, created_at, reason, invoice_id)
-                    VALUES ($1, $2, NOW(), 'sale', $3)
-                    `,
+          INSERT INTO "Inventory_movement"
+            (product_id, quantity, created_at, reason, invoice_id)
+          VALUES
+            ($1, $2, NOW(), 'sale', $3)
+          `,
                     [tx.product_id, tx.quantity, invoiceId]
                 );
+
+                const productRes = await client.query(
+                    `SELECT condition, size FROM "Product" WHERE id = $1`,
+                    [tx.product_id]
+                );
+
+                if (
+                    productRes.rows[0] &&
+                    productRes.rows[0].condition === "SET" &&
+                    tx.quantity % 4 !== 0
+                ) {
+                    await handleTireSet(client, updatedInventoryRows[0]);
+                }
             } else if (tx.category === "Service") {
                 await client.query(
                     `
-                    INSERT INTO "transaction" 
-                    (invoice_id, amount, description, created_at, type, category, created_by, payment_method, service_id, quantity, status)
-                    VALUES ($1,$2,$3,NOW(),$4,$5,$6,$7,$8,$9,$10)
-                    `,
-                    [invoiceId, tx.amount, tx.description, tx.type, tx.category, created_by, payment_method || null, tx.service_id, tx.quantity, status]
+          INSERT INTO "Transaction"
+            (invoice_id, amount, description, created_at, type, category, created_by, payment_method, service_id, quantity, status)
+          VALUES
+            ($1, $2, $3, NOW(), $4, $5, $6, $7, $8, $9, $10)
+          `,
+                    [
+                        invoiceId,
+                        tx.amount,
+                        tx.description,
+                        tx.type,
+                        tx.category,
+                        created_by,
+                        payment_method ?? null,
+                        tx.service_id,
+                        tx.quantity,
+                        status,
+                    ]
                 );
             }
         }
 
         await client.query("COMMIT");
-        res.status(201).json({ success: true, invoice_id: invoiceId });
+
+        return res.status(201).json({ invoice_id: invoiceId });
     } catch (err) {
         await client.query("ROLLBACK");
-        console.error("Create invoice error", err);
-        res.status(500).json({ success: false, error: "Failed to create invoice" });
+        console.error("Create invoice error:", err);
+
+        return res.status(500).json({
+            error: err.message || "Failed to create invoice",
+        });
     } finally {
         client.release();
     }
@@ -119,63 +191,60 @@ const createInvoice = asyncHandler(async (req, res) => {
 /**
  * GET /api/invoices/:id
  */
-const getInvoicebyID = asyncHandler(async (req, res) => {
+const getInvoiceById = asyncHandler(async (req, res) => {
     const { id } = req.params;
-    try {
-        const { rows } = await db.query(
-            `
-            SELECT
-                i.id,
-                i.invoice_no,
-                i.customer_id,
-                i.total_amount,
-                i.created_at,
-                i.subtotal,
-                i.tax,
-                i.payment_method,
-                COALESCE(
-                    json_agg(
-                        jsonb_build_object(
-                            'id', t.id,
-                            'amount', t.amount,
-                            'description', t.description,
-                            'type', t.type,
-                            'category', t.category,
-                            'quantity', t.quantity,
-                            'product_name', p.name,
-                            'service_name', s.name
-                        )
-                    ) FILTER (WHERE t.id IS NOT NULL),
-                    '[]'
-                ) AS transactions
-            FROM "invoice" i
-            LEFT JOIN "transaction" t
-                ON t.invoice_id = i.id
-                AND t.deleted_at IS NULL
-            LEFT JOIN "service" s
-                ON s.id = t.service_id
-            LEFT JOIN "product" p
-                ON p.id = t.product_id
-            WHERE i.id = $1
-                AND i.deleted_at IS NULL
-            GROUP BY i.id;
-            `,
-            [id]
-        );
 
-        if (rows.length === 0) {
-            return res.status(404).json({ error: "Invoice not found" });
-        }
+    const { rows } = await db.query(
+        `
+    SELECT
+      i.id,
+      i.invoice_no,
+      i.customer_id,
+      i.total_amount,
+      i.created_at,
+      i.subtotal,
+      i.tax,
+      i.payment_method,
+      COALESCE(
+        json_agg(
+          jsonb_build_object(
+            'id', t.id,
+            'amount', t.amount,
+            'description', t.description,
+            'type', t.type,
+            'category', t.category,
+            'quantity', t.quantity,
+            'product_name', p.name,
+            'service_name', s.name
+          )
+        ) FILTER (WHERE t.id IS NOT NULL),
+        '[]'
+      ) AS transactions
+    FROM "Invoice" i
+    LEFT JOIN "Transaction" t
+      ON t.invoice_id = i.id
+      AND t.deleted_at IS NULL
+    LEFT JOIN "Service" s
+      ON s.id = t.service_id
+    LEFT JOIN "Product" p
+      ON p.id = t.product_id
+    WHERE i.id = $1
+      AND i.deleted_at IS NULL
+    GROUP BY i.id
+    `,
+        [id]
+    );
 
-        res.json(rows[0]);
-    } catch (err) {
-        console.error("GET Invoice error:", err);
-        res.status(500).json({ error: "Failed to fetch invoice" });
+    if (rows.length === 0) {
+        return res.status(404).json({ error: "Invoice not found" });
     }
+
+    return res.status(200).json(rows[0]);
 });
 
 /**
  * PUT /api/invoices/:id
+ * Finalize invoice and its transactions
  */
 const updateInvoice = asyncHandler(async (req, res) => {
     const { id } = req.params;
@@ -187,28 +256,41 @@ const updateInvoice = asyncHandler(async (req, res) => {
 
         await client.query(
             `
-            UPDATE "invoice"
-            SET total_amount = $2, subtotal = $3, tax = $4, payment_method = $5, updated_at = NOW(), status = 'finished'
-            WHERE id = $1
-            `,
+      UPDATE "Invoice"
+      SET
+        total_amount = $2,
+        subtotal = $3,
+        tax = $4,
+        payment_method = $5,
+        updated_at = NOW(),
+        status = 'finished'
+      WHERE id = $1
+      `,
             [id, body.total_amount, body.subtotal, body.tax, body.payment_method]
         );
 
         await client.query(
             `
-            UPDATE "transaction"
-            SET payment_method = $1, updated_at = NOW(), status = 'finished'
-            WHERE invoice_id = $2
-            `,
+      UPDATE "Transaction"
+      SET
+        payment_method = $1,
+        updated_at = NOW(),
+        status = 'finished'
+      WHERE invoice_id = $2
+      `,
             [body.payment_method, id]
         );
 
         await client.query("COMMIT");
-        res.json({ success: true });
+
+        return res.status(200).json({ success: true });
     } catch (err) {
         await client.query("ROLLBACK");
-        console.error("Edit Invoice error:", err);
-        res.status(500).json({ error: "Failed to update invoice" });
+        console.error("Edit Invoice Payment Method error:", err);
+
+        return res.status(500).json({
+            error: "Failed to update invoice payment method",
+        });
     } finally {
         client.release();
     }
@@ -216,7 +298,7 @@ const updateInvoice = asyncHandler(async (req, res) => {
 
 /**
  * DELETE /api/invoices/:id
- * Soft delete
+ * Soft delete invoice and linked transactions
  */
 const deleteInvoice = asyncHandler(async (req, res) => {
     const { id } = req.params;
@@ -226,21 +308,35 @@ const deleteInvoice = asyncHandler(async (req, res) => {
         await client.query("BEGIN");
 
         await client.query(
-            `UPDATE "invoice" SET deleted_at = NOW() WHERE id = $1 AND deleted_at IS NULL`,
+            `
+      UPDATE "Invoice"
+      SET deleted_at = NOW()
+      WHERE id = $1
+        AND deleted_at IS NULL
+      `,
             [id]
         );
 
         await client.query(
-            `UPDATE "transaction" SET deleted_at = NOW() WHERE invoice_id = $1 AND deleted_at IS NULL`,
+            `
+      UPDATE "Transaction"
+      SET deleted_at = NOW()
+      WHERE invoice_id = $1
+        AND deleted_at IS NULL
+      `,
             [id]
         );
 
         await client.query("COMMIT");
-        res.json({ message: "Invoice deleted (soft)" });
+
+        return res.status(200).json({ message: "Invoice deleted (soft)" });
     } catch (err) {
         await client.query("ROLLBACK");
         console.error("DELETE Invoice error:", err);
-        res.status(500).json({ error: "Failed to delete invoice" });
+
+        return res.status(500).json({
+            error: "Failed to delete invoice",
+        });
     } finally {
         client.release();
     }
@@ -249,7 +345,7 @@ const deleteInvoice = asyncHandler(async (req, res) => {
 module.exports = {
     getInvoices,
     createInvoice,
-    getInvoicebyID,
+    getInvoiceById,
     updateInvoice,
     deleteInvoice,
 };

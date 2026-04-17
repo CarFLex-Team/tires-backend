@@ -6,206 +6,233 @@ const asyncHandler = (fn) => (req, res, next) =>
 
 /**
  * GET /api/customers
- * Returns all active customers
  */
-const getcustomer = asyncHandler(async (req, res) => {
+const getCustomers = asyncHandler(async (req, res) => {
     const { rows } = await db.query(`
     SELECT *
-    FROM "customer"
+    FROM "Customer"
     WHERE deleted_at IS NULL
     ORDER BY created_at DESC
   `);
 
-    res.status(200).json({ success: true, data: rows });
+    return res.status(200).json(rows);
 });
 
 /**
  * GET /api/customers/:id
- * Returns customer by ID
  */
-const getcustomerById = asyncHandler(async (req, res) => {
+const getCustomerById = asyncHandler(async (req, res) => {
     const { id } = req.params;
 
-    const { rows, rowCount } = await db.query(`
-    SELECT *
-    FROM "customer"
-    WHERE id = $1 AND deleted_at IS NULL
-  `, [id]);
+    const { rows } = await db.query(
+        `
+    SELECT
+      c.*,
+      COALESCE(
+        json_agg(
+          jsonb_build_object(
+            'id', i.id,
+            'invoice_no', i.invoice_no,
+            'total_amount', i.total_amount,
+            'created_at', i.created_at,
+            'payment_method', i.payment_method,
+            'created_by', u.name,
+            'status', i.status,
+            'subtotal', i.subtotal
+          )
+          ORDER BY i.created_at DESC
+        )
+        FILTER (WHERE i.id IS NOT NULL),
+        '[]'
+      ) AS invoices
+    FROM "Customer" c
+    LEFT JOIN "Invoice" i
+      ON i.customer_id = c.id
+      AND i.deleted_at IS NULL
+    LEFT JOIN "User" u
+      ON u.id = i.created_by
+    WHERE c.id = $1
+      AND c.deleted_at IS NULL
+    GROUP BY c.id
+    `,
+        [id]
+    );
 
-    if (rowCount === 0) {
-        return res.status(404).json({ success: false, error: "Customer not found" });
+    if (rows.length === 0) {
+        return res.status(404).json({ error: "Customer not found" });
     }
 
-    res.status(200).json({ success: true, data: rows[0] });
+    return res.status(200).json(rows[0]);
 });
 
 /**
  * POST /api/customers
- * Creates a new customer
  */
-const createcustomer = asyncHandler(async (req, res) => {
+const createCustomer = asyncHandler(async (req, res) => {
     const { name, email, phone } = req.body;
 
     if (!name || !email || !phone) {
-        return res.status(400).json({ success: false, error: "Name, email and phone are required" });
+        return res.status(400).json({
+            error: "All fields are required",
+        });
     }
 
     try {
-        const { rows } = await db.query(`
-      INSERT INTO "customer" (name, email, phone)
+        const { rows } = await db.query(
+            `
+      INSERT INTO "Customer" (name, email, phone)
       VALUES ($1, $2, $3)
       RETURNING *
-    `, [name, email, phone]);
+      `,
+            [name, email, phone]
+        );
 
-        res.status(201).json({ success: true, data: rows[0] });
+        return res.status(201).json(rows[0]);
     } catch (error) {
         if (error.code === "23505") {
-            return res.status(400).json({ success: false, error: "Email already exists" });
+            return res.status(400).json({
+                error: "Email already exists",
+            });
         }
-        throw error;
+
+        return res.status(500).json({
+            error: error.message,
+        });
     }
 });
 
 /**
  * PUT /api/customers/:id
- * Updates an existing customer
  */
-const updatecustomer = asyncHandler(async (req, res) => {
-    const { id } = req.params;
-    const { name, email, phone } = req.body;
+// const updateCustomer = asyncHandler(async (req, res) => {
+//   const { id } = req.params;
+//   const { name, email, phone } = req.body;
 
-    if (!name || !email || !phone) {
-        return res.status(400).json({ success: false, error: "Name, email and phone are required" });
-    }
+//   if (!name || !email || !phone) {
+//     return res.status(400).json({
+//       error: "Name, email and phone are required",
+//     });
+//   }
 
-    try {
-        const { rows, rowCount } = await db.query(`
-      UPDATE "customer"
-      SET name = $1,
-          email = $2,
-          phone = $3,
-          updated_at = NOW()
-      WHERE id = $4 AND deleted_at IS NULL
-      RETURNING *
-    `, [name, email, phone, id]);
+//   try {
+//     const { rows, rowCount } = await db.query(
+//       `
+//       UPDATE "Customer"
+//       SET
+//         name = $1,
+//         email = $2,
+//         phone = $3,
+//         updated_at = NOW()
+//       WHERE id = $4
+//         AND deleted_at IS NULL
+//       RETURNING *
+//       `,
+//       [name, email, phone, id]
+//     );
 
-        if (rowCount === 0) {
-            return res.status(404).json({ success: false, error: "Customer not found" });
-        }
+//     if (rowCount === 0) {
+//       return res.status(404).json({ error: "Customer not found" });
+//     }
 
-        res.status(200).json({ success: true, data: rows[0] });
-    } catch (error) {
-        if (error.code === "23505") {
-            return res.status(400).json({ success: false, error: "Email already exists" });
-        }
-        throw error;
-    }
-});
+//     return res.status(200).json(rows[0]);
+//   } catch (error) {
+//     if (error.code === "23505") {
+//       return res.status(400).json({
+//         error: "Email already exists",
+//       });
+//     }
+
+//     return res.status(500).json({
+//       error: error.message,
+//     });
+//   }
+// });
 
 /**
  * DELETE /api/customers/:id
- * Soft delete a customer
  */
-const deletecustomer = asyncHandler(async (req, res) => {
+const deleteCustomer = asyncHandler(async (req, res) => {
     const { id } = req.params;
 
-    const { rowCount } = await db.query(`
-    UPDATE "customer"
-    SET deleted_at = NOW()
-    WHERE id = $1 AND deleted_at IS NULL
-  `, [id]);
+    try {
+        await db.query(
+            `
+      UPDATE "Customer"
+      SET deleted_at = NOW()
+      WHERE id = $1
+      `,
+            [id]
+        );
 
-    if (rowCount === 0) {
-        return res.status(404).json({ success: false, error: "Customer not found" });
+        return res.status(200).json({
+            message: "Customer deleted (soft)",
+        });
+    } catch (error) {
+        return res.status(500).json({
+            error: "Failed to delete customer",
+        });
     }
-
-    res.status(204).send();
 });
 
 /**
- * GET /api/customers/top
- * Returns top customers by turnover
- * Optional query param: month=YYYY-MM
+ * GET /api/customers/summary
  */
-const getTopcustomer = asyncHandler(async (req, res) => {
-    const query = `
+const getCustomerSummary = asyncHandler(async (req, res) => {
+    const { rows } = await db.query(`
     SELECT
       c.name AS customer,
-      COALESCE(SUM(i.total_amount), 0) AS turnover
-    FROM "customer" c
-    LEFT JOIN "invoice" i 
-      ON i.customer_id = c.id AND i.deleted_at IS NULL
-    WHERE c.deleted_at IS NULL
+      SUM(i.total_amount) AS turn_over
+    FROM "Invoice" i
+    JOIN "Customer" c
+      ON c.id = i.customer_id
+    WHERE i.deleted_at IS NULL
+      AND c.deleted_at IS NULL
     GROUP BY c.id, c.name
-    ORDER BY turnover DESC
-    LIMIT 5;
-  `;
+    ORDER BY turn_over DESC
+    LIMIT 3
+  `);
 
-    // Execute the query
-    const { rows } = await db.query(query);
-
-    // Handle case where no customers exist
-    if (!rows || rows.length === 0) {
-        return res.status(200).json({
-            success: true,
-            message: 'No customers found',
-            data: [],
-        });
-    }
-
-    // Respond with top customers
-    res.status(200).json({
-        success: true,
-        data: rows,
-    });
+    return res.status(200).json(rows);
 });
 
+/**
+ * GET /api/customers/summary/monthly?month=YYYY-MM
+ */
+const getMonthlyCustomerSummary = asyncHandler(async (req, res) => {
+    const { month } = req.query;
 
-const getmonthlycustomer = async (req, res, next) => {
-    try {
-        const { month } = req.query;
-
-        if (!month) {
-            return res.status(400).json({
-                error: "Month query parameter is required (format: YYYY-MM)"
-            });
-        }
-
-        const { rows } = await db.query(
-            `
-            SELECT
-                c.name AS customer,
-                SUM(i.total_amount) AS turn_over
-            FROM "invoice" i
-            JOIN "customer" c ON c.id = i.customer_id
-            WHERE i.deleted_at IS NULL
-              AND c.deleted_at IS NULL
-              AND i.created_at >= date_trunc('month', $1::date)
-              AND i.created_at < date_trunc('month', $1::date) + INTERVAL '1 month'
-            GROUP BY c.id, c.name
-            ORDER BY turn_over DESC
-            LIMIT 2;
-            `,
-            [`${month}-01`]
-        );
-
-        res.status(200).json(rows);
-
-    } catch (error) {
-        console.error(error);
-        res.status(500).json({
-            error: "Failed to fetch monthly top customers"
-        });
-
+    if (!month) {
+        return res.status(400).send("Month is required");
     }
-};
+
+    const { rows } = await db.query(
+        `
+    SELECT
+      c.name AS customer,
+      SUM(i.total_amount) AS turn_over
+    FROM "Invoice" i
+    JOIN "Customer" c
+      ON c.id = i.customer_id
+    WHERE i.deleted_at IS NULL
+      AND c.deleted_at IS NULL
+      AND i.created_at >= date_trunc('month', $1::date)
+      AND i.created_at < date_trunc('month', $1::date) + INTERVAL '1 month'
+    GROUP BY c.id, c.name
+    ORDER BY turn_over DESC
+    LIMIT 2
+    `,
+        [`${month}-01`]
+    );
+
+    return res.status(200).json(rows);
+});
 
 module.exports = {
-    getcustomer,
-    getcustomerById,
-    createcustomer,
-    updatecustomer,
-    deletecustomer,
-    getTopcustomer,
-    getmonthlycustomer,
+    getCustomers,
+    getCustomerById,
+    createCustomer,
+    //  updateCustomer, 
+    deleteCustomer,
+    getCustomerSummary,
+    getMonthlyCustomerSummary,
 };

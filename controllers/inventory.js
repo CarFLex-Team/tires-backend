@@ -6,219 +6,277 @@ const asyncHandler = (fn) => (req, res, next) =>
 
 /**
  * GET /api/inventory
- * Returns all inventory items
+ * Returns all inventory items joined with product data
  */
 const getInventory = asyncHandler(async (req, res) => {
     const { rows } = await db.query(`
-   SELECT 
-        i.id AS inventory_id,
-        p.id,
-        p.name,
-        p.size,
-        p.brand,
-        p.sku,
-        p.price,
-        p.cost,
-        i.quantity,
-        p.is_active,
-        p.created_at,
-        p.updated_at,
-        p.condition
-      FROM "inventory" i
-      INNER JOIN "product" p 
-        ON i.product_id = p.id
-      WHERE p.deleted_at IS NULL
-      ORDER BY p.created_at DESC
+    SELECT
+      i.id AS inventory_id,
+      p.id AS id,
+      p.name,
+      p.size,
+      p.brand,
+      p.sku,
+      p.price,
+      p.cost,
+      i.quantity,
+      p.is_active,
+      p.created_at,
+      p.updated_at,
+      p.condition
+    FROM "Inventory" AS i
+    INNER JOIN "Product" AS p
+      ON i.product_id = p.id
+    WHERE p.deleted_at IS NULL
+    ORDER BY p.size ASC
   `);
 
-    res.status(200).json({ success: true, data: rows });
+    return res.status(200).json(rows);
 });
 
 /**
  * GET /api/inventory/:id
+ * Returns a single inventory item by PRODUCT id
  */
 const getInventoryById = asyncHandler(async (req, res) => {
     const { id } = req.params;
 
     const { rows, rowCount } = await db.query(
         `
-    SELECT *
-    FROM "inventory"
-    WHERE id = $1
-  `,
+    SELECT
+      i.id AS inventory_id,
+      p.id AS id,
+      p.name,
+      p.size,
+      p.brand,
+      p.sku,
+      p.price,
+      p.cost,
+      i.quantity,
+      p.is_active,
+      p.created_at,
+      p.updated_at,
+      p.condition
+    FROM "Inventory" AS i
+    INNER JOIN "Product" AS p
+      ON i.product_id = p.id
+    WHERE p.id = $1
+      AND p.deleted_at IS NULL
+    `,
         [id]
     );
 
     if (rowCount === 0) {
-        return res.status(404).json({ success: false, error: "Item not found" });
+        return res.status(404).json({ error: "Inventory item not found" });
     }
 
-    res.status(200).json({ success: true, data: rows[0] });
+    return res.status(200).json(rows[0]);
 });
 
 /**
  * POST /api/inventory
- * Create new inventory item
+ * Create new product + inventory record
  */
 const createInventory = asyncHandler(async (req, res) => {
-    const { name, price, cost, is_active } = req.body;
+    const client = await db.connect();
 
-    if (!name || price == null || cost == null) {
-        return res.status(400).json({
-            success: false,
-            error: "Name, price and cost are required",
+    try {
+        const { size, brand, price, cost, quantity, condition } = req.body;
+
+        if (
+            !size ||
+            !brand ||
+            price == null ||
+            cost == null ||
+            quantity == null ||
+            !condition
+        ) {
+            return res.status(400).json({
+                error: "size, brand, price, cost, quantity and condition are required",
+            });
+        }
+
+        await client.query("BEGIN");
+
+        const productResult = await client.query(
+            `
+      INSERT INTO "Product"
+        (size, brand, price, cost, is_active, created_at, updated_at, name, condition)
+      VALUES
+        ($1, $2, $3, $4, true, NOW(), NOW(), $5, $6)
+      RETURNING id
+      `,
+            [size, brand, price, cost, `${condition} ${brand} ${size}`, condition]
+        );
+
+        const productId = productResult.rows[0].id;
+
+        const inventoryResult = await client.query(
+            `
+      INSERT INTO "Inventory" (product_id, quantity, updated_at)
+      VALUES ($1, $2, NOW())
+      RETURNING *
+      `,
+            [productId, quantity]
+        );
+
+        await client.query("COMMIT");
+
+        return res.status(201).json(inventoryResult.rows[0]);
+    } catch (error) {
+        await client.query("ROLLBACK");
+        return res.status(500).json({
+            error: "Failed to create inventory item",
+            details: error.message,
         });
+    } finally {
+        client.release();
     }
-
-    const { rows } = await db.query(
-        `
-    INSERT INTO "inventory" (name, price, cost, is_active)
-    VALUES ($1, $2, $3, $4)
-    RETURNING *
-  `,
-        [name, price, cost, is_active ?? true]
-    );
-
-    res.status(201).json({ success: true, data: rows[0] });
 });
 
 /**
  * PUT /api/inventory/:id
- * Update inventory item
+ * Update product + inventory by PRODUCT id
  */
 const updateInventory = asyncHandler(async (req, res) => {
-    const { id } = req.params;
-    const { price, cost, is_active } = req.body;
+    const client = await db.connect();
 
-    if (price == null || cost == null || is_active == null) {
-        return res.status(400).json({
-            success: false,
-            error: "Price, cost and is_active are required",
-        });
-    }
+    try {
+        const { id } = req.params;
+        const { price, cost, is_active, size, quantity } = req.body;
 
-    const { rows, rowCount } = await db.query(
-        `
-    UPDATE "inventory"
-    SET price = $2,
+        await client.query("BEGIN");
+
+        const productResult = await client.query(
+            `
+      UPDATE "Product"
+      SET
+        price = $2,
         cost = $3,
         is_active = $4,
-        updated_at = NOW()
-    WHERE id = $1
-    RETURNING *
-  `,
-        [id, price, cost, is_active]
-    );
+        updated_at = NOW(),
+        size = $5
+      WHERE id = $1
+        AND deleted_at IS NULL
+      RETURNING id
+      `,
+            [id, price, cost, is_active, size]
+        );
 
-    if (rowCount === 0) {
-        return res.status(404).json({
-            success: false,
-            error: "Inventory item not found",
+        if (productResult.rowCount === 0) {
+            await client.query("ROLLBACK");
+            return res.status(404).json({ error: "Product not found" });
+        }
+
+        await client.query(
+            `
+      UPDATE "Inventory"
+      SET quantity = $1, updated_at = NOW()
+      WHERE product_id = $2
+      `,
+            [quantity, id]
+        );
+
+        await client.query("COMMIT");
+
+        return res.status(200).json({ success: true });
+    } catch (error) {
+        await client.query("ROLLBACK");
+        return res.status(500).json({
+            error: "Failed to update inventory item",
+            details: error.message,
         });
+    } finally {
+        client.release();
     }
-
-    res.status(200).json({ success: true, data: rows[0] });
 });
 
 /**
  * DELETE /api/inventory/:id
- * Hard delete inventory item
+ * Soft delete PRODUCT by product id
  */
 const deleteInventory = asyncHandler(async (req, res) => {
     const { id } = req.params;
 
     const { rowCount } = await db.query(
         `
-    DELETE FROM "inventory"
+    UPDATE "Product"
+    SET deleted_at = NOW(), updated_at = NOW()
     WHERE id = $1
-  `,
+      AND deleted_at IS NULL
+    `,
         [id]
     );
 
     if (rowCount === 0) {
-        return res.status(404).json({
-            success: false,
-            error: "Inventory item not found",
-        });
+        return res.status(404).json({ error: "Product not found" });
     }
 
-    res.status(204).send();
+    return res.status(200).json({ message: "Product deleted (soft)" });
 });
 
-const getTopInventory = async (req, res) => {
-    try {
-        const { rows } = await db.query(`
-      SELECT 
-        i.id AS inventory_id,
-        p.id AS id,
-        p.name,
-        p.size,
-        p.brand,
-        p.sku,
-        p.price,
-        p.cost,
-        i.quantity,
-        p.updated_at,
-        p.condition
-      FROM "inventory" AS i
-      JOIN "product" AS p ON i.product_id = p.id
-      WHERE i.quantity <= 10
-      ORDER BY i.quantity ASC
-    `);
+/**
+ * GET /api/inventory/summary
+ * Low stock items
+ */
+const getTopInventory = asyncHandler(async (req, res) => {
+    const { rows } = await db.query(`
+    SELECT
+      i.id AS inventory_id,
+      p.id AS id,
+      p.name,
+      p.size,
+      p.brand,
+      p.sku,
+      p.price,
+      p.cost,
+      i.quantity,
+      p.is_active,
+      p.created_at,
+      p.updated_at,
+      p.condition
+    FROM "Inventory" AS i
+    INNER JOIN "Product" AS p
+      ON i.product_id = p.id
+    WHERE p.deleted_at IS NULL
+      AND i.quantity <= 4
+    ORDER BY i.quantity ASC
+  `);
 
-        res.status(200).json({
-            success: true,
-            data: rows,
-        });
+    return res.status(200).json(rows);
+});
 
-    } catch (error) {
-        res.status(500).json({
-            success: false,
-            error: "Failed to fetch inventory summary",
-            details: error.message,
-        });
-    }
-};
-
-const getMonthlyInventory = async (req, res) => {
-    const { month } = req.query; // expects YYYY-MM
+/**
+ * GET /api/inventory/summary/product-monthly?month=YYYY-MM
+ */
+const getMonthlyInventory = asyncHandler(async (req, res) => {
+    const { month } = req.query;
 
     if (!month) {
         return res.status(400).json({ error: "Month is required" });
     }
 
-    try {
-        const { rows } = await db.query(
-            `
-      SELECT
-        p.name AS Product,
-        SUM(t.amount) AS turn_over
-      FROM "transaction" t
-      JOIN "product" p ON p.id = t.product_id
-      WHERE t.deleted_at IS NULL
-        AND p.deleted_at IS NULL
-        AND t.created_at >= date_trunc('month', $1::date)
-        AND t.created_at < date_trunc('month', $1::date) + INTERVAL '1 month'
-      GROUP BY p.id, p.name
-      ORDER BY turn_over DESC
-      LIMIT 2;
-      `,
-            [`${month}-01`]
-        );
+    const { rows } = await db.query(
+        `
+    SELECT
+      p.name AS Product,
+      SUM(t.amount) AS turn_over
+    FROM "Transaction" t
+    JOIN "Product" p
+      ON p.id = t.product_id
+    WHERE t.deleted_at IS NULL
+      AND p.deleted_at IS NULL
+      AND t.created_at >= date_trunc('month', $1::date)
+      AND t.created_at < date_trunc('month', $1::date) + INTERVAL '1 month'
+    GROUP BY p.id, p.name
+    ORDER BY turn_over DESC
+    LIMIT 2
+    `,
+        [`${month}-01`]
+    );
 
-        res.status(200).json({
-            success: true,
-            data: rows,
-        });
-    } catch (error) {
-        console.error(error);
-        return res.status(500).json({
-            error: "Failed to fetch inventory monthly summary",
-            details: error.message,
-        });
-    }
-};
-
+    return res.status(200).json(rows);
+});
 
 module.exports = {
     getInventory,

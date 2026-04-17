@@ -3,7 +3,7 @@ const express = require('express');
 const {
     getInvoices,
     createInvoice,
-    getInvoicebyID,
+    getInvoiceById,
     updateInvoice,
     deleteInvoice,
 } = require('../controllers/invoice');
@@ -16,7 +16,7 @@ const router = express.Router();
 router.get('/', getInvoices);
 
 // GET single invoice by ID
-router.get('/:id', getInvoicebyID);
+router.get('/:id', getInvoiceById);
 
 // CREATE a new invoice
 router.post('/', createInvoice);

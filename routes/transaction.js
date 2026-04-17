@@ -1,40 +1,31 @@
-const express = require('express');
+const express = require("express");
 const {
     getTransactions,
-    getTransactionById,
+    //  getTransactionById,              
     createTransaction,
-    updateTransaction,
+    //  updateTransaction,               
     deleteTransaction,
-    getTopTransaction,
-    getMonthlyTransactions,
-} = require('../controllers/transaction');
-
+    getTransactionSummary,
+    getMonthlyTransactionSummary,
+    // getMonthlyTransactionsList,      
+} = require("../controllers/transaction");
 
 const router = express.Router();
 
-// ===== Customer CRUD Routes =====
+// ===== Transaction Routes =====
 
-// GET all customers
-router.get('/', getTransactions);
+//summary routes 
+router.get("/summary/monthly", getMonthlyTransactionSummary);
+router.get("/summary", getTransactionSummary);
 
-// Top 5 customers by turnover
-router.get('/summary', getTopTransaction);
+// route monthly list
+// router.get("/monthly-list", getMonthlyTransactionsList);
 
-// Monthly top customers
-router.get('/summary/monthly', getMonthlyTransactions);
-
-// GET single customer
-router.get('/:id', getTransactionById);
-
-// CREATE customer
-router.post('/', createTransaction);
-
-// UPDATE customer
-router.put('/:id', updateTransaction);
-
-// SOFT DELETE customer
-router.delete('/:id', deleteTransaction);
-
-
+// Core routes
+router.get("/", getTransactions);
+// router.get("/:id", getTransactionById);      
+router.post("/", createTransaction);
+// router.put("/:id", updateTransaction);       
+router.delete("/:id", deleteTransaction);
 
 module.exports = router;

@@ -1,4 +1,4 @@
-const express = require('express');
+const express = require("express");
 const {
     getInventory,
     getInventoryById,
@@ -7,31 +7,19 @@ const {
     deleteInventory,
     getTopInventory,
     getMonthlyInventory,
-} = require('../controllers/inventory');
+} = require("../controllers/inventory");
 
 const router = express.Router();
 
+// ===== Inventory Summary Routes =====
+router.get("/summary/product-monthly", getMonthlyInventory);
+router.get("/summary", getTopInventory);
+
 // ===== Inventory CRUD Routes =====
-
-// GET all inventory items
-router.get('/', getInventory);
-
-// Top 5 inventory items
-router.get('/summary', getTopInventory);
-
-// GET single inventory item
-router.get('/:id', getInventoryById);
-
-// CREATE inventory item
-router.post('/', createInventory);
-
-// UPDATE inventory item
-router.put('/:id', updateInventory);
-
-// SOFT DELETE inventory item
-router.delete('/:id', deleteInventory);
-
-// Monthly top inventory items
-router.get('/summary/product-monthly', getMonthlyInventory);
+router.get("/", getInventory);
+router.get("/:id", getInventoryById);
+router.post("/", createInventory);
+router.put("/:id", updateInventory);
+router.delete("/:id", deleteInventory);
 
 module.exports = router;
