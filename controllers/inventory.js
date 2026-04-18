@@ -38,40 +38,40 @@ const getInventory = asyncHandler(async (req, res) => {
  * GET /api/inventory/:id
  * Returns a single inventory item by PRODUCT id
  */
-const getInventoryById = asyncHandler(async (req, res) => {
-    const { id } = req.params;
+// const getInventoryById = asyncHandler(async (req, res) => {
+//     const { id } = req.params;
 
-    const { rows, rowCount } = await db.query(
-        `
-    SELECT
-      i.id AS inventory_id,
-      p.id AS id,
-      p.name,
-      p.size,
-      p.brand,
-      p.sku,
-      p.price,
-      p.cost,
-      i.quantity,
-      p.is_active,
-      p.created_at,
-      p.updated_at,
-      p.condition
-    FROM "Inventory" AS i
-    INNER JOIN "Product" AS p
-      ON i.product_id = p.id
-    WHERE p.id = $1
-      AND p.deleted_at IS NULL
-    `,
-        [id]
-    );
+//     const { rows, rowCount } = await db.query(
+//         `
+//     SELECT
+//       i.id AS inventory_id,
+//       p.id AS id,
+//       p.name,
+//       p.size,
+//       p.brand,
+//       p.sku,
+//       p.price,
+//       p.cost,
+//       i.quantity,
+//       p.is_active,
+//       p.created_at,
+//       p.updated_at,
+//       p.condition
+//     FROM "Inventory" AS i
+//     INNER JOIN "Product" AS p
+//       ON i.product_id = p.id
+//     WHERE p.id = $1
+//       AND p.deleted_at IS NULL
+//     `,
+//         [id]
+//     );
 
-    if (rowCount === 0) {
-        return res.status(404).json({ error: "Inventory item not found" });
-    }
+//     if (rowCount === 0) {
+//         return res.status(404).json({ error: "Inventory item not found" });
+//     }
 
-    return res.status(200).json(rows[0]);
-});
+//     return res.status(200).json(rows[0]);
+// });
 
 /**
  * POST /api/inventory
@@ -280,7 +280,7 @@ const getMonthlyInventory = asyncHandler(async (req, res) => {
 
 module.exports = {
     getInventory,
-    getInventoryById,
+    // getInventoryById,
     createInventory,
     updateInventory,
     deleteInventory,

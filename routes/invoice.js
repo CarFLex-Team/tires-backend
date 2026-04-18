@@ -4,8 +4,8 @@ const {
     getInvoices,
     createInvoice,
     getInvoiceById,
-    updateInvoice,
-    deleteInvoice,
+    updateInvoiceId,
+    deleteInvoiceId,
 } = require('../controllers/invoice');
 
 const router = express.Router();
@@ -15,16 +15,16 @@ const router = express.Router();
 // GET all pending invoices
 router.get('/', getInvoices);
 
-// GET single invoice by ID
-router.get('/:id', getInvoiceById);
-
 // CREATE a new invoice
 router.post('/', createInvoice);
 
+// GET single invoice by ID
+router.get('/:id', getInvoiceById);
+
 // UPDATE invoice (e.g., payment method)
-router.put('/:id', updateInvoice);
+router.put('/:id', updateInvoiceId);
 
 // SOFT DELETE invoice
-router.delete('/:id', deleteInvoice);
+router.delete('/:id', deleteInvoiceId);
 
 module.exports = router;

@@ -1,7 +1,7 @@
 const express = require("express");
 const {
     getInventory,
-    getInventoryById,
+    // getInventoryById,
     createInventory,
     updateInventory,
     deleteInventory,
@@ -17,7 +17,7 @@ router.get("/summary", getTopInventory);
 
 // ===== Inventory CRUD Routes =====
 router.get("/", getInventory);
-router.get("/:id", getInventoryById);
+// router.get("/:id", getInventoryById);
 router.post("/", createInventory);
 router.put("/:id", updateInventory);
 router.delete("/:id", deleteInventory);

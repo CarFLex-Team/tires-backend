@@ -21,9 +21,9 @@ app.get('/api/health', (_req, res) => res.status(200).json({ status: 'OK' }));
 // Routes
 app.use('/api/customers', customerRoutes);
 app.use('/api/services', servicesRoute);
-app.use('/api/transaction', transactionRoute);
+app.use('/api/transactions', transactionRoute);
 app.use('/api/inventory', inventoryRoute);
-app.use('/api/invoice', invoiceRoute);
+app.use('/api/invoices', invoiceRoute);
 
 // 404 handler
 app.use((_req, res) => res.status(404).json({ error: 'Route not found' }));
