@@ -1,5 +1,5 @@
 const { db } = require("../config/db");
-const handleTireSet = require("../lib/handleTireSet");
+
 
 // Async handler to catch errors automatically
 const asyncHandler = (fn) => (req, res, next) =>
