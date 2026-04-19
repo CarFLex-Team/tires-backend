@@ -7,64 +7,58 @@ const asyncHandler = (fn) => (req, res, next) =>
 
 /**
  * GET /api/invoices
- * Returns all pending invoices with customer names
+ * Returns invoices with filters
  */
-const getInvoices = async (req, res) => {
-    try {
-        const { date, month, status } = req.query;
+const getInvoices = asyncHandler(async (req, res) => {
+    const { date, month, status } = req.query;
 
-        let whereClause = "";
-        const params = [];
+    let whereClause = "";
+    const params = [];
 
-        if (date) {
-            params.push(date);
-            whereClause += `
-        AND i.created_at >= $${params.length}::date
-        AND i.created_at < $${params.length}::date + INTERVAL '1 day'
-      `;
-        }
-
-        if (month) {
-            params.push(`${month}-01`);
-            whereClause += `
-        AND i.created_at >= date_trunc('month', $${params.length}::date)
-        AND i.created_at < date_trunc('month', $${params.length}::date) + INTERVAL '1 month'
-      `;
-        }
-
-        if (status) {
-            params.push(status);
-            whereClause += ` AND i.status = $${params.length}`;
-        }
-        const { rows } = await db.query(
-            `
-      SELECT
-        i.*,
-        c.name AS customer_name,
-        c.phone AS customer_phone,
-        u.name AS created_by_name
-      FROM "Invoice" i
-      LEFT JOIN "Customer" c ON c.id = i.customer_id
-      LEFT JOIN "User" u ON u.id = i.created_by
-      WHERE i.deleted_at IS NULL
-        AND i.status = $${params.length}
-        ${whereClause}
-      ORDER BY i.created_at DESC
-      `,
-            params
-        );
-
-        res.status(200).json(rows);
-    } catch (error) {
-        res.status(500).json({ error: "Failed to fetch invoices" });
+    if (date) {
+        params.push(date);
+        whereClause += `
+      AND i.created_at >= $${params.length}::date
+      AND i.created_at < $${params.length}::date + INTERVAL '1 day'
+    `;
     }
-};
+
+    if (month) {
+        params.push(`${month}-01`);
+        whereClause += `
+      AND i.created_at >= date_trunc('month', $${params.length}::date)
+      AND i.created_at < date_trunc('month', $${params.length}::date) + INTERVAL '1 month'
+    `;
+    }
+
+    const { rows } = await db.query(
+        `
+    SELECT
+      i.*,
+      c.name AS customer_name,
+      c.phone AS customer_phone,
+      u.name AS created_by_name
+    FROM "Invoice" i
+    LEFT JOIN "Customer" c
+      ON c.id = i.customer_id
+    LEFT JOIN "User" u
+      ON u.id = i.created_by
+    WHERE i.deleted_at IS NULL
+      AND i.status = $${params.length + 1}
+      ${whereClause}
+    ORDER BY i.created_at DESC
+    `,
+        [...params, status]
+    );
+
+    return res.status(200).json(rows);
+});
 
 /**
  * POST /api/invoices
  * Creates a new invoice with transactions and updates inventory
  */
-const createInvoice = async (req, res) => {
+const createInvoice = asyncHandler(async (req, res) => {
     const client = await db.connect();
 
     try {
@@ -96,9 +90,19 @@ const createInvoice = async (req, res) => {
 
         const invoiceRes = await client.query(
             `
-      INSERT INTO "Invoice"
-      (customer_id, created_by, total_amount, subtotal, tax, cash_amount, debit_amount, created_at, payment_method, status)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,NOW(),$8,$9)
+      INSERT INTO "Invoice" (
+        customer_id,
+        created_by,
+        total_amount,
+        subtotal,
+        tax,
+        cash_amount,
+        debit_amount,
+        created_at,
+        payment_method,
+        status
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), $8, $9)
       RETURNING id
       `,
             [
@@ -120,9 +124,20 @@ const createInvoice = async (req, res) => {
             if (tx.category === "Tire") {
                 await client.query(
                     `
-          INSERT INTO "Transaction"
-          (invoice_id, amount, description, created_at, type, category, created_by, payment_method, product_id, quantity, status)
-          VALUES ($1,$2,$3,NOW(),$4,$5,$6,$7,$8,$9,$10)
+          INSERT INTO "Transaction" (
+            invoice_id,
+            amount,
+            description,
+            created_at,
+            type,
+            category,
+            created_by,
+            payment_method,
+            product_id,
+            quantity,
+            status
+          )
+          VALUES ($1, $2, $3, NOW(), $4, $5, $6, $7, $8, $9, $10)
           `,
                     [
                         invoiceId,
@@ -151,71 +166,92 @@ const createInvoice = async (req, res) => {
           `,
                     [tx.quantity, tx.product_id]
                 );
+
                 if (updatedInventoryRows.length === 0) {
                     throw new Error("Insufficient inventory");
-
-                    await client.query(
-                        `
-          INSERT INTO "Inventory_movement"
-          (product_id, quantity, created_at, reason, invoice_id)
-          VALUES ($1,$2,NOW(),'sale',$3)
-          `,
-                        [tx.product_id, tx.quantity, invoiceId]
-                    );
-
-                    const productRes = await client.query(
-                        `SELECT condition FROM "Product" WHERE id = $1`,
-                        [tx.product_id]
-                    );
-
-                    if (
-                        productRes.rows[0].condition === "SET" &&
-                        tx.quantity % 4 !== 0
-                    ) {
-                        await handleTireSet(client, updatedInventoryRows[0]);
-                    }
-                } else if (tx.category === "Service") {
-                    await client.query(
-                        `
-          INSERT INTO "Transaction"
-          (invoice_id, amount, description, created_at, type, category, created_by, payment_method, service_id, quantity, status)
-          VALUES ($1,$2,$3,NOW(),$4,$5,$6,$7,$8,$9,$10)
-          `,
-                        [
-                            invoiceId,
-                            tx.amount,
-                            tx.description,
-                            tx.type,
-                            tx.category,
-                            created_by,
-                            payment_method || null,
-                            tx.service_id,
-                            tx.quantity,
-                            status,
-                        ]
-                    );
                 }
+
+                await client.query(
+                    `
+          INSERT INTO "Inventory_movement" (
+            product_id,
+            quantity,
+            created_at,
+            reason,
+            invoice_id
+          )
+          VALUES ($1, $2, NOW(), 'sale', $3)
+          `,
+                    [tx.product_id, tx.quantity, invoiceId]
+                );
+
+                const productRes = await client.query(
+                    `SELECT condition, size FROM "Product" WHERE id = $1`,
+                    [tx.product_id]
+                );
+
+                if (
+                    productRes.rows[0]?.condition === "SET" &&
+                    tx.quantity % 4 !== 0
+                ) {
+                    await handleTireSet(client, updatedInventoryRows[0]);
+                }
+            } else if (tx.category === "Service") {
+                await client.query(
+                    `
+          INSERT INTO "Transaction" (
+            invoice_id,
+            amount,
+            description,
+            created_at,
+            type,
+            category,
+            created_by,
+            payment_method,
+            service_id,
+            quantity,
+            status
+          )
+          VALUES ($1, $2, $3, NOW(), $4, $5, $6, $7, $8, $9, $10)
+          `,
+                    [
+                        invoiceId,
+                        tx.amount,
+                        tx.description,
+                        tx.type,
+                        tx.category,
+                        created_by,
+                        payment_method || null,
+                        tx.service_id,
+                        tx.quantity,
+                        status,
+                    ]
+                );
             }
-
-            await client.query("COMMIT");
-
-            res.status(201).json({ invoice_id: invoiceId });
-        } catch (err) {
-            await client.query("ROLLBACK");
-            res.status(500).json({ error: "Failed to create invoice" });
-        } finally {
-            client.release();
         }
-    };
 
-    /**
-     * GET /api/invoices/:id
-     */
-    const getInvoiceById = asyncHandler(async (req, res) => {
-        const { id } = req.params;
+        await client.query("COMMIT");
 
-        const { rows } = await db.query(
-            `
+        return res.status(201).json({ invoice_id: invoiceId });
+    } catch (err) {
+        await client.query("ROLLBACK");
+        console.error("Create invoice error:", err);
+
+        return res.status(500).json({ error: "Failed to create invoice" });
+    } finally {
+        client.release();
+    }
+});
+
+/**
+ * GET /api/invoices/:id
+ * Returns a single invoice with its transactions
+ */
+const getInvoiceById = asyncHandler(async (req, res) => {
+    const { id } = req.params;
+
+    const { rows } = await db.query(
+        `
     SELECT
       i.id,
       i.invoice_no,
@@ -225,6 +261,8 @@ const createInvoice = async (req, res) => {
       i.subtotal,
       i.tax,
       i.payment_method,
+      i.cash_amount,
+      i.debit_amount,
       COALESCE(
         json_agg(
           jsonb_build_object(
@@ -252,30 +290,38 @@ const createInvoice = async (req, res) => {
       AND i.deleted_at IS NULL
     GROUP BY i.id
     `,
-            [id]
-        );
+        [id]
+    );
 
-        if (rows.length === 0) {
-            return res.status(404).json({ error: "Invoice not found" });
-        }
+    if (rows.length === 0) {
+        return res.status(404).json({ error: "Invoice not found" });
+    }
 
-        return res.status(200).json(rows[0]);
-    });
+    return res.status(200).json(rows[0]);
+});
 
-    /**
-     * PUT /api/invoices/:id
-     * Finalize invoice and its transactions
-     */
-    const updateInvoiceId = asyncHandler(async (req, res) => {
-        const { id } = req.params;
-        const body = req.body;
-        const client = await db.connect();
+/**
+ * PUT /api/invoices/:id
+ * Finalize invoice and linked transactions
+ */
+const updateInvoiceById = asyncHandler(async (req, res) => {
+    const { id } = req.params;
+    const {
+        total_amount,
+        subtotal,
+        tax,
+        payment_method,
+        cash_amount,
+        debit_amount,
+    } = req.body;
 
-        try {
-            await client.query("BEGIN");
+    const client = await db.connect();
 
-            await client.query(
-                `
+    try {
+        await client.query("BEGIN");
+
+        await client.query(
+            `
       UPDATE "Invoice"
       SET
         total_amount = $2,
@@ -283,14 +329,24 @@ const createInvoice = async (req, res) => {
         tax = $4,
         payment_method = $5,
         updated_at = NOW(),
-        status = 'finished'
+        status = 'finished',
+        cash_amount = $6,
+        debit_amount = $7
       WHERE id = $1
       `,
-                [id, body.total_amount, body.subtotal, body.tax, body.payment_method]
-            );
+            [
+                id,
+                total_amount,
+                subtotal,
+                tax,
+                payment_method,
+                cash_amount,
+                debit_amount,
+            ]
+        );
 
-            await client.query(
-                `
+        await client.query(
+            `
       UPDATE "Transaction"
       SET
         payment_method = $1,
@@ -298,74 +354,74 @@ const createInvoice = async (req, res) => {
         status = 'finished'
       WHERE invoice_id = $2
       `,
-                [body.payment_method, id]
-            );
+            [payment_method, id]
+        );
 
-            await client.query("COMMIT");
+        await client.query("COMMIT");
 
-            return res.status(200).json({ success: true });
-        } catch (err) {
-            await client.query("ROLLBACK");
-            console.error("Edit Invoice Payment Method error:", err);
+        return res.status(200).json({ success: true });
+    } catch (err) {
+        await client.query("ROLLBACK");
+        console.error("Edit Invoice Payment Method error:", err);
 
-            return res.status(500).json({
-                error: "Failed to update invoice payment method",
-            });
-        } finally {
-            client.release();
-        }
-    });
+        return res.status(500).json({
+            error: "Failed to update invoice payment method",
+        });
+    } finally {
+        client.release();
+    }
+});
 
-    /**
-     * DELETE /api/invoices/:id
-     * Soft delete invoice and linked transactions
-     */
-    const deleteInvoiceId = asyncHandler(async (req, res) => {
-        const { id } = req.params;
-        const client = await db.connect();
+/**
+ * DELETE /api/invoices/:id
+ * Soft delete invoice and linked transactions
+ */
+const deleteInvoiceById = asyncHandler(async (req, res) => {
+    const { id } = req.params;
+    const client = await db.connect();
 
-        try {
-            await client.query("BEGIN");
+    try {
+        await client.query("BEGIN");
 
-            await client.query(
-                `
+        await client.query(
+            `
       UPDATE "Invoice"
       SET deleted_at = NOW()
       WHERE id = $1
         AND deleted_at IS NULL
       `,
-                [id]
-            );
+            [id]
+        );
 
-            await client.query(
-                `
+        await client.query(
+            `
       UPDATE "Transaction"
       SET deleted_at = NOW()
       WHERE invoice_id = $1
         AND deleted_at IS NULL
       `,
-                [id]
-            );
+            [id]
+        );
 
-            await client.query("COMMIT");
+        await client.query("COMMIT");
 
-            return res.status(200).json({ message: "Invoice deleted (soft)" });
-        } catch (err) {
-            await client.query("ROLLBACK");
-            console.error("DELETE Invoice error:", err);
+        return res.status(200).json({ message: "Invoice deleted (soft)" });
+    } catch (err) {
+        await client.query("ROLLBACK");
+        console.error("DELETE Invoice error:", err);
 
-            return res.status(500).json({
-                error: "Failed to delete invoice",
-            });
-        } finally {
-            client.release();
-        }
-    });
+        return res.status(500).json({
+            error: "Failed to delete invoice",
+        });
+    } finally {
+        client.release();
+    }
+});
 
-    module.exports = {
-        getInvoices,
-        createInvoice,
-        getInvoiceById,
-        updateInvoiceId,
-        deleteInvoiceId,
-    };
+module.exports = {
+    getInvoices,
+    createInvoice,
+    getInvoiceById,
+    updateInvoiceById,
+    deleteInvoiceById,
+};
