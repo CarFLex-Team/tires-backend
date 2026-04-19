@@ -15,6 +15,12 @@ const getInvoices = asyncHandler(async (req, res) => {
     let whereClause = "";
     const params = [];
 
+    if (!status && !date && !month) {
+        return res.status(400).json({
+            error: "At least one query parameter is required (status, date, or month)"
+        });
+    }
+
     if (date) {
         params.push(date);
         whereClause += `
