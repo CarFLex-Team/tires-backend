@@ -80,7 +80,7 @@ const createInvoice = asyncHandler(async (req, res) => {
             debit_amount,
         } = req.body;
 
-        const created_by = req.user?.id;
+        const created_by = req.user?.id || req.body.created_by;
 
         if (
             !customer_id ||
