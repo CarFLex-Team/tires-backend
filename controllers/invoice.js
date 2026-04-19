@@ -247,7 +247,7 @@ const createInvoice = asyncHandler(async (req, res) => {
  * GET /api/invoices/:id
  * Returns a single invoice with its transactions
  */
-const getInvoiceById = asyncHandler(async (req, res) => {
+const getInvoiceId = asyncHandler(async (req, res) => {
     const { id } = req.params;
 
     const { rows } = await db.query(
@@ -304,7 +304,7 @@ const getInvoiceById = asyncHandler(async (req, res) => {
  * PUT /api/invoices/:id
  * Finalize invoice and linked transactions
  */
-const updateInvoiceById = asyncHandler(async (req, res) => {
+const updateInvoiceId = asyncHandler(async (req, res) => {
     const { id } = req.params;
     const {
         total_amount,
@@ -376,7 +376,7 @@ const updateInvoiceById = asyncHandler(async (req, res) => {
  * DELETE /api/invoices/:id
  * Soft delete invoice and linked transactions
  */
-const deleteInvoiceById = asyncHandler(async (req, res) => {
+const deleteInvoiceId = asyncHandler(async (req, res) => {
     const { id } = req.params;
     const client = await db.connect();
 
@@ -421,7 +421,7 @@ const deleteInvoiceById = asyncHandler(async (req, res) => {
 module.exports = {
     getInvoices,
     createInvoice,
-    getInvoiceById,
-    updateInvoiceById,
-    deleteInvoiceById,
+    getInvoiceId,
+    updateInvoiceId,
+    deleteInvoiceId,
 };
