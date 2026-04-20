@@ -99,7 +99,7 @@ const createTransaction = asyncHandler(async (req, res) => {
         quantity,
     } = req.body;
 
-    const created_by = req.user?.id;
+    const created_by = req.user?.id || req.body.created_by;
 
     if (!created_by) {
         return res.status(401).json({ error: "Unauthorized" });
