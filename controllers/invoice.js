@@ -279,6 +279,7 @@ const getInvoiceId = asyncHandler(async (req, res) => {
             'category', t.category,
             'quantity', t.quantity,
             'product_name', p.name,
+            'product_id', t.product_id,
             'service_name', s.name
           )
         ) FILTER (WHERE t.id IS NOT NULL),
@@ -380,10 +381,12 @@ const updateInvoiceId = asyncHandler(async (req, res) => {
 
 /**
  * DELETE /api/invoices/:id
- * Soft delete invoice and linked transactions
+ * Soft delete invoice and linked transactions,
+ * restore inventory, and log inventory movement
  */
 const deleteInvoiceId = asyncHandler(async (req, res) => {
     const { id } = req.params;
+    const { items } = req.body;
     const client = await db.connect();
 
     try {
@@ -408,6 +411,28 @@ const deleteInvoiceId = asyncHandler(async (req, res) => {
       `,
             [id]
         );
+
+        for (const transaction of items) {
+            if (transaction.product_id) {
+                await client.query(
+                    `
+          UPDATE "Inventory"
+          SET quantity = quantity + $1, updated_at = NOW()
+          WHERE product_id = $2
+          `,
+                    [transaction.quantity, transaction.product_id]
+                );
+            }
+
+            await client.query(
+                `
+          INSERT INTO "Inventory_movement"
+            (product_id, quantity, created_at, reason, invoice_id)
+          VALUES ($1, $2, NOW(), 'return', $3)
+          `,
+                [transaction.product_id, transaction.quantity, id]
+            );
+        }
 
         await client.query("COMMIT");
 
