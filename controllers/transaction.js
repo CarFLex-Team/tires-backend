@@ -105,6 +105,7 @@ const createTransaction = asyncHandler(async (req, res) => {
         return res.status(401).json({ error: "Unauthorized" });
     }
 
+
     if (
         amount == null ||
         !type ||
