@@ -424,9 +424,137 @@ const deleteInvoiceId = asyncHandler(async (req, res) => {
     }
 });
 
+
+const getInvoiceSummary = asyncHandler(async (req, res) => {
+    const { date } = req.query;
+    const targetDate = date || new Date().toISOString().slice(0, 10);
+
+    try {
+        const { rows } = await db.query(
+            `
+            SELECT
+              COUNT(*) FILTER (WHERE i.deleted_at IS NULL) AS total_transactions,
+
+              COUNT(*) FILTER (
+                WHERE i.status = 'finished' AND i.deleted_at IS NULL
+              ) AS total_sales_count,
+
+              COALESCE(SUM(i.total_amount) FILTER (
+                WHERE i.status = 'finished' AND i.deleted_at IS NULL
+              ), 0) AS total_sales_amount,
+
+              COUNT(*) FILTER (
+                WHERE i.status = 'finished'
+                  AND (i.payment_method = 'Cash' OR i.payment_method = 'Mix')
+                  AND i.deleted_at IS NULL
+              ) AS cash_sales_count,
+
+              COALESCE(SUM(i.cash_amount) FILTER (
+                WHERE i.status = 'finished'
+                  AND (i.payment_method = 'Cash' OR i.payment_method = 'Mix')
+                  AND i.deleted_at IS NULL
+              ), 0) AS cash_sales_amount,
+
+              COUNT(*) FILTER (
+                WHERE i.status = 'finished'
+                  AND (i.payment_method = 'Debit' OR i.payment_method = 'Mix')
+                  AND i.deleted_at IS NULL
+              ) AS debit_sales_count,
+
+              COALESCE(SUM(i.debit_amount) FILTER (
+                WHERE i.status = 'finished'
+                  AND (i.payment_method = 'Debit' OR i.payment_method = 'Mix')
+                  AND i.deleted_at IS NULL
+              ), 0) AS debit_sales_amount
+            FROM "Invoice" i
+            WHERE
+              i.created_at >= $1::date
+              AND i.created_at < $1::date + INTERVAL '1 day'
+              AND i.status = 'finished'
+            `,
+            [targetDate]
+        );
+
+        return res.status(200).json(rows[0]);
+    } catch (error) {
+        console.error("Daily invoice summary error:", error);
+        return res.status(500).json({
+            error: "Failed to fetch daily invoice summary",
+        });
+    }
+});
+
+const getMonthlyInvoiceSummary = asyncHandler(async (req, res) => {
+    const { month } = req.query;
+
+    if (!month) {
+        return res.status(400).json({
+            error: "Month is required",
+        });
+    }
+
+    try {
+        const { rows } = await db.query(
+            `
+            SELECT
+              COUNT(*) FILTER (WHERE i.deleted_at IS NULL) AS total_transactions,
+
+              COUNT(*) FILTER (
+                WHERE i.status = 'finished' AND i.deleted_at IS NULL
+              ) AS total_sales_count,
+
+              COALESCE(SUM(i.total_amount) FILTER (
+                WHERE i.status = 'finished' AND i.deleted_at IS NULL
+              ), 0) AS total_sales_amount,
+
+              COUNT(*) FILTER (
+                WHERE i.status = 'finished'
+                  AND (i.payment_method = 'Cash' OR i.payment_method = 'Mix')
+                  AND i.deleted_at IS NULL
+              ) AS cash_sales_count,
+
+              COALESCE(SUM(i.cash_amount) FILTER (
+                WHERE i.status = 'finished'
+                  AND (i.payment_method = 'Cash' OR i.payment_method = 'Mix')
+                  AND i.deleted_at IS NULL
+              ), 0) AS cash_sales_amount,
+
+              COUNT(*) FILTER (
+                WHERE i.status = 'finished'
+                  AND (i.payment_method = 'Debit' OR i.payment_method = 'Mix')
+                  AND i.deleted_at IS NULL
+              ) AS debit_sales_count,
+
+              COALESCE(SUM(i.debit_amount) FILTER (
+                WHERE i.status = 'finished'
+                  AND (i.payment_method = 'Debit' OR i.payment_method = 'Mix')
+                  AND i.deleted_at IS NULL
+              ), 0) AS debit_sales_amount
+            FROM "Invoice" i
+            WHERE
+              i.created_at >= date_trunc('month', $1::date)
+              AND i.created_at < date_trunc('month', $1::date) + INTERVAL '1 month'
+              AND i.status = 'finished'
+            `,
+            [`${month}-01`]
+        );
+
+        return res.status(200).json(rows[0]);
+    } catch (error) {
+        console.error("Monthly invoice summary error:", error);
+        return res.status(500).json({
+            error: "Failed to fetch monthly invoice summary",
+        });
+    }
+});
+
+
+
 module.exports = {
     getInvoices,
     createInvoice,
+    getInvoiceSummary,
+    getMonthlyInvoiceSummary,
     getInvoiceId,
     updateInvoiceId,
     deleteInvoiceId,

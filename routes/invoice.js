@@ -6,6 +6,8 @@ const {
     getInvoiceId,
     updateInvoiceId,
     deleteInvoiceId,
+    getInvoiceSummary,
+    getMonthlyInvoiceSummary,
 } = require('../controllers/invoice');
 
 const router = express.Router();
@@ -17,6 +19,12 @@ router.get('/', getInvoices);
 
 // CREATE a new invoice
 router.post('/', createInvoice);
+
+// GET a Invoice summary by date
+router.get('/summary', getInvoiceSummary);
+
+// GET Monthly Invoices Summary
+router.get('/summary/monthly', getMonthlyInvoiceSummary);
 
 // GET single invoice by ID
 router.get('/:id', getInvoiceId);
