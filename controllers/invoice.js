@@ -388,7 +388,7 @@ const deleteInvoiceId = asyncHandler(async (req, res) => {
     console.log("BODY:", req);
     console.log("HEADERS:", req.headers);
     const { id } = req.params;
-    const { items } = req.body;
+    const { items = [] } = req.body;
     const client = await db.connect();
 
     try {
