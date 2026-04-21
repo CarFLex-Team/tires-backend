@@ -385,6 +385,8 @@ const updateInvoiceId = asyncHandler(async (req, res) => {
  * restore inventory, and log inventory movement
  */
 const deleteInvoiceId = asyncHandler(async (req, res) => {
+    console.log("BODY:", req.body);
+    console.log("HEADERS:", req.headers);
     const { id } = req.params;
     const { items } = req.body;
     const client = await db.connect();
