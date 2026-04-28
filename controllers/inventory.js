@@ -1,4 +1,6 @@
 const { db } = require("../config/db");
+const { supabase } = require("../config/supabase");
+
 
 // Async handler to catch errors automatically
 const asyncHandler = (fn) => (req, res, next) =>
@@ -23,15 +25,29 @@ const getInventory = asyncHandler(async (req, res) => {
       p.is_active,
       p.created_at,
       p.updated_at,
-      p.condition
+      p.condition,
+      pi.image_path
     FROM "Inventory" AS i
     INNER JOIN "Product" AS p
       ON i.product_id = p.id
+    LEFT JOIN "ProductImage" AS pi
+      ON pi.product_id = p.id
+      AND pi.deleted_at IS NULL
+      AND pi.is_main = true
     WHERE p.deleted_at IS NULL
     ORDER BY p.size ASC
   `);
 
-    return res.status(200).json(rows);
+    const baseUrl = `${process.env.SUPABASE_URL}/storage/v1/object/public/${process.env.SUPABASE_BUCKET}`;
+
+    const result = rows.map((item) => ({
+        ...item,
+        image_url: item.image_path
+            ? `${baseUrl}/${item.image_path}`
+            : null,
+    }));
+
+    return res.status(200).json(result);
 });
 
 /**
@@ -120,9 +136,47 @@ const createInventory = asyncHandler(async (req, res) => {
             [productId, quantity]
         );
 
+        let image = null;
+
+        if (req.file) {
+            let ext = req.file.mimetype.split("/")[1];
+
+            if (ext === "jpeg") ext = "jpg";
+
+            const fileName = `${Date.now()}.${ext}`;
+            const imagePath = `${id}/${fileName}`;
+
+            const { error: uploadError } = await supabase.storage
+                .from(process.env.SUPABASE_BUCKET || "product")
+                .upload(imagePath, req.file.buffer, {
+                    contentType: req.file.mimetype,
+                    upsert: false,
+                });
+
+            if (uploadError) {
+                throw new Error(uploadError.message);
+            }
+
+            const imageResult = await client.query(
+                `
+        INSERT INTO "ProductImage"
+          (product_id, image_path, is_main, created_at, updated_at)
+        VALUES
+          ($1, $2, true, NOW(), NOW())
+        RETURNING *
+        `,
+                [productId, imagePath]
+            );
+
+            image = imageResult.rows[0];
+        }
+
         await client.query("COMMIT");
 
-        return res.status(201).json(inventoryResult.rows[0]);
+        return res.status(201).json({
+            inventory: inventoryResult.rows[0],
+            image,
+        });
     } catch (error) {
         await client.query("ROLLBACK");
         return res.status(500).json({
@@ -278,6 +332,99 @@ const getMonthlyInventory = asyncHandler(async (req, res) => {
     return res.status(200).json(rows);
 });
 
+
+const updateInventoryImage = asyncHandler(async (req, res) => {
+    const client = await db.connect();
+
+    try {
+        const { id } = req.params; // product_id
+
+        if (!req.file) {
+            return res.status(400).json({ error: "Image file is required" });
+        }
+
+        await client.query("BEGIN");
+
+        const productResult = await client.query(
+            `
+      SELECT id
+      FROM "Product"
+      WHERE id = $1
+        AND deleted_at IS NULL
+      `,
+            [id]
+        );
+
+        if (productResult.rowCount === 0) {
+            await client.query("ROLLBACK");
+            return res.status(404).json({ error: "Product not found" });
+        }
+
+        // NOW: only one active image per product
+        // FUTURE: remove this block if you want multiple active images
+        await client.query(
+            `
+      UPDATE "ProductImage"
+      SET deleted_at = NOW(), updated_at = NOW()
+      WHERE product_id = $1
+        AND deleted_at IS NULL
+      `,
+            [id]
+        );
+
+        let ext = req.file.mimetype.split("/")[1];
+
+        if (ext === "jpeg") ext = "jpg";
+
+        const fileName = `${Date.now()}.${ext}`;
+        const imagePath = `${id}/${fileName}`;
+
+
+        const { error: uploadError } = await supabase.storage
+            .from(process.env.SUPABASE_BUCKET || "product")
+            .upload(imagePath, req.file.buffer, {
+                contentType: req.file.mimetype,
+                upsert: false,
+            });
+
+        if (uploadError) {
+            await client.query("ROLLBACK");
+            return res.status(500).json({
+                error: "Failed to upload image",
+                details: uploadError.message,
+            });
+        }
+
+        const imageResult = await client.query(
+            `
+      INSERT INTO "ProductImage"
+        (product_id, image_path, is_main, created_at, updated_at)
+      VALUES
+        ($1, $2, true, NOW(), NOW())
+      RETURNING *
+      `,
+            [id, imagePath]
+        );
+
+        await client.query("COMMIT");
+
+        return res.status(200).json({
+            message: "Product image updated successfully",
+            image: imageResult.rows[0],
+        });
+    } catch (error) {
+        await client.query("ROLLBACK");
+
+        return res.status(500).json({
+            error: "Failed to update product image",
+            details: error.message,
+        });
+    } finally {
+        client.release();
+    }
+});
+
+
 module.exports = {
     getInventory,
     // getInventoryById,
@@ -286,4 +433,5 @@ module.exports = {
     deleteInventory,
     getTopInventory,
     getMonthlyInventory,
+    updateInventoryImage,
 };

@@ -29,9 +29,28 @@ app.use('/api/invoices', invoiceRoute);
 app.use((_req, res) => res.status(404).json({ error: 'Route not found' }));
 
 // Global error handler
+// Global error handler
 app.use((err, _req, res, _next) => {
-    console.error(err.stack);
-    res.status(500).json({ error: 'Internal server error' });
+    console.error(err);
+
+    // Multer file type error
+    if (err.message === "INVALID_FILE_TYPE") {
+        return res.status(400).json({
+            error: "Only PNG, JPEG, JPG, and WEBP images are allowed",
+        });
+    }
+
+    // Multer file size error
+    if (err.code === "LIMIT_FILE_SIZE") {
+        return res.status(400).json({
+            error: "File too large. Max size is 5MB",
+        });
+    }
+
+    return res.status(500).json({
+        error: "Internal server error",
+        details: err.message,
+    });
 });
 
 // Start server

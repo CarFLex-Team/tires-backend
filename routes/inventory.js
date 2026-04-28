@@ -7,9 +7,12 @@ const {
     deleteInventory,
     getTopInventory,
     getMonthlyInventory,
+    updateInventoryImage,
+
 } = require("../controllers/inventory");
 
 const router = express.Router();
+const uploadImage = require("../middleware/uploadImage.js");
 
 // ===== Inventory Summary Routes =====
 router.get("/summary/product-monthly", getMonthlyInventory);
@@ -18,7 +21,8 @@ router.get("/summary", getTopInventory);
 // ===== Inventory CRUD Routes =====
 router.get("/", getInventory);
 // router.get("/:id", getInventoryById);
-router.post("/", createInventory);
+router.post("/", uploadImage.single("image"), createInventory);
+router.put("/:id/image", uploadImage.single("image"), updateInventoryImage);        // P.ID not Inventory ID
 router.put("/:id", updateInventory);
 router.delete("/:id", deleteInventory);
 

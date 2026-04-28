@@ -21,11 +21,13 @@
   },
   "homepage": "https://github.com/CarFLex-Team/tires-backend#readme",
   "dependencies": {
+    "@supabase/supabase-js": "^2.104.1",
     "body-parser": "^2.2.2",
     "cors": "^2.8.6",
     "dotenv": "^17.3.1",
     "express": "^5.2.1",
     "morgan": "^1.10.1",
+    "multer": "^2.1.1",
     "pg": "^8.19.0"
   },
   "devDependencies": {
