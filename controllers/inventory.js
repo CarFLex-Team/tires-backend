@@ -424,6 +424,27 @@ const updateInventoryImage = asyncHandler(async (req, res) => {
     }
 });
 
+const deleteInventoryImage = asyncHandler(async (req, res) => {
+    const { id } = req.params; // product_id
+
+    const { rowCount } = await db.query(
+        `
+    UPDATE "ProductImage"
+    SET deleted_at = NOW(), updated_at = NOW()
+    WHERE product_id = $1
+      AND deleted_at IS NULL
+    `,
+        [id]
+    );
+
+    if (rowCount === 0) {
+        return res.status(404).json({ error: "Active image not found" });
+    }
+
+    return res.status(200).json({
+        message: "Product image deleted successfully",
+    });
+});
 
 module.exports = {
     getInventory,

@@ -8,6 +8,7 @@ const {
     getTopInventory,
     getMonthlyInventory,
     updateInventoryImage,
+    deleteInventoryImage
 
 } = require("../controllers/inventory");
 
@@ -23,6 +24,7 @@ router.get("/", getInventory);
 // router.get("/:id", getInventoryById);
 router.post("/", uploadImage.single("image"), createInventory);
 router.put("/:id/image", uploadImage.single("image"), updateInventoryImage);        // P.ID not Inventory ID
+router.delete("/:id/image", deleteInventoryImage);
 router.put("/:id", updateInventory);
 router.delete("/:id", deleteInventory);
 
