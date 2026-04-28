@@ -32,6 +32,7 @@ const getInventory = asyncHandler(async (req, res) => {
       ON i.product_id = p.id
     LEFT JOIN "ProductImage" AS pi
       ON pi.product_id = p.id
+      WHERE p.deleted_at IS NULL
     ORDER BY p.size ASC
   `);
 
