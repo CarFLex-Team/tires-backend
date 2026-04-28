@@ -455,4 +455,6 @@ module.exports = {
     getTopInventory,
     getMonthlyInventory,
     updateInventoryImage,
+    deleteInventoryImage,
+
 };
