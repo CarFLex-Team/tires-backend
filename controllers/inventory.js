@@ -32,9 +32,6 @@ const getInventory = asyncHandler(async (req, res) => {
       ON i.product_id = p.id
     LEFT JOIN "ProductImage" AS pi
       ON pi.product_id = p.id
-      AND pi.deleted_at IS NULL
-      AND pi.is_main = true
-    WHERE p.deleted_at IS NULL
     ORDER BY p.size ASC
   `);
 
@@ -360,25 +357,28 @@ const updateInventoryImage = asyncHandler(async (req, res) => {
             return res.status(404).json({ error: "Product not found" });
         }
 
-        // NOW: only one active image per product
-        // FUTURE: remove this block if you want multiple active images
-        await client.query(
+        const existingImage = await client.query(
             `
-      UPDATE "ProductImage"
-      SET deleted_at = NOW(), updated_at = NOW()
+      SELECT id
+      FROM "ProductImage"
       WHERE product_id = $1
-        AND deleted_at IS NULL
+      LIMIT 1
       `,
             [id]
         );
 
-        let ext = req.file.mimetype.split("/")[1];
+        if (existingImage.rowCount > 0) {
+            await client.query("ROLLBACK");
+            return res.status(409).json({
+                error: "Product already has an image. Delete it first before adding a new one.",
+            });
+        }
 
+        let ext = req.file.mimetype.split("/")[1];
         if (ext === "jpeg") ext = "jpg";
 
         const fileName = `${Date.now()}.${ext}`;
         const imagePath = `${id}/${fileName}`;
-
 
         const { error: uploadError } = await supabase.storage
             .from(process.env.SUPABASE_BUCKET || "product")
@@ -398,9 +398,9 @@ const updateInventoryImage = asyncHandler(async (req, res) => {
         const imageResult = await client.query(
             `
       INSERT INTO "ProductImage"
-        (product_id, image_path, is_main, created_at, updated_at)
+        (product_id, image_path, created_at, updated_at)
       VALUES
-        ($1, $2, true, NOW(), NOW())
+        ($1, $2, NOW(), NOW())
       RETURNING *
       `,
             [id, imagePath]
@@ -409,14 +409,14 @@ const updateInventoryImage = asyncHandler(async (req, res) => {
         await client.query("COMMIT");
 
         return res.status(200).json({
-            message: "Product image updated successfully",
+            message: "Product image added successfully",
             image: imageResult.rows[0],
         });
     } catch (error) {
         await client.query("ROLLBACK");
 
         return res.status(500).json({
-            error: "Failed to update product image",
+            error: "Failed to add product image",
             details: error.message,
         });
     } finally {
@@ -425,25 +425,62 @@ const updateInventoryImage = asyncHandler(async (req, res) => {
 });
 
 const deleteInventoryImage = asyncHandler(async (req, res) => {
-    const { id } = req.params; // product_id
+    const client = await db.connect();
 
-    const { rowCount } = await db.query(
-        `
-    UPDATE "ProductImage"
-    SET deleted_at = NOW(), updated_at = NOW()
-    WHERE product_id = $1
-      AND deleted_at IS NULL
-    `,
-        [id]
-    );
+    try {
+        const { id } = req.params; // product_id
 
-    if (rowCount === 0) {
-        return res.status(404).json({ error: "Active image not found" });
+        await client.query("BEGIN");
+
+        const imageResult = await client.query(
+            `
+      SELECT id, image_path
+      FROM "ProductImage"
+      WHERE product_id = $1
+      LIMIT 1
+      `,
+            [id]
+        );
+
+        if (imageResult.rowCount === 0) {
+            await client.query("ROLLBACK");
+            return res.status(404).json({ error: "Image not found" });
+        }
+
+        const image = imageResult.rows[0];
+
+        const { error: storageError } = await supabase.storage
+            .from(process.env.SUPABASE_BUCKET || "product")
+            .remove([image.image_path]);
+
+        if (storageError) {
+            await client.query("ROLLBACK");
+            return res.status(500).json({
+                error: "Failed to delete image from storage",
+                details: storageError.message,
+            });
+        }
+
+        await client.query(
+            `
+      DELETE FROM "ProductImage"
+      WHERE id = $1
+      `,
+            [image.id]
+        );
+
+        await client.query("COMMIT");
+
+        return res.status(200).json({ message: "Image deleted permanently", });
+
+    } catch (error) {
+        await client.query("ROLLBACK");
+
+        return res.status(500).json({ error: "Failed to delete image", details: error.message, });
+
+    } finally {
+        client.release();
     }
-
-    return res.status(200).json({
-        message: "Product image deleted successfully",
-    });
 });
 
 module.exports = {
