@@ -5,6 +5,100 @@ const { db } = require("../config/db");
 const asyncHandler = (fn) => (req, res, next) =>
     Promise.resolve(fn(req, res, next)).catch(next);
 
+const splitSets = (currentQuantity) => {
+    const quantityToUsed = currentQuantity % 4;
+    const newSetQuantity = currentQuantity - quantityToUsed;
+
+    return { quantityToUsed, newSetQuantity };
+};
+
+const handleTireSet = async (client, product) => {
+    if (!product) return;
+
+    const remainingQuantity = Number(product.quantity);
+
+    const { quantityToUsed, newSetQuantity } = splitSets(remainingQuantity);
+
+    if (quantityToUsed === 0) {
+        return;
+    }
+
+    const { rows: usedRows } = await client.query(
+        `
+        SELECT
+            i.id AS inventory_id,
+            p.id AS product_id
+        FROM "Inventory" i
+        INNER JOIN "Product" p
+            ON i.product_id = p.id
+        WHERE p.size = $1
+          AND p.condition = 'USED'
+          AND p.deleted_at IS NULL
+        LIMIT 1
+        `,
+        [product.size]
+    );
+
+    if (usedRows.length > 0) {
+        await client.query(
+            `
+            UPDATE "Inventory"
+            SET quantity = quantity + $1
+            WHERE id = $2
+            `,
+            [quantityToUsed, usedRows[0].inventory_id]
+        );
+    } else {
+        const { rows: newUsedProductRows } = await client.query(
+            `
+            INSERT INTO "Product" (
+                name,
+                size,
+                brand,
+                sku,
+                price,
+                cost,
+                condition,
+                is_active,
+                created_at,
+                updated_at
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, 'USED', true, NOW(), NOW())
+            RETURNING id
+            `,
+            [
+                `Used Tire ${product.size}`,
+                product.size,
+                product.brand || "Used",
+                `USED-${product.size}-${Date.now()}`,
+                product.price,
+                product.cost,
+            ]
+        );
+
+        await client.query(
+            `
+            INSERT INTO "Inventory" (
+                product_id,
+                quantity
+            )
+            VALUES ($1, $2)
+            `,
+            [newUsedProductRows[0].id, quantityToUsed]
+        );
+    }
+
+    await client.query(
+        `
+        UPDATE "Inventory"
+        SET quantity = $1
+        WHERE product_id = $2
+        `,
+        [newSetQuantity, product.id]
+    );
+};
+
+
 /**
  * GET /api/invoices
  * Returns invoices with filters
@@ -309,70 +403,319 @@ const getInvoiceId = asyncHandler(async (req, res) => {
 
 /**
  * PUT /api/invoices/:id
- * Finalize invoice and linked transactions
+ * Fully update invoice:
+ * - customer
+ * - totals
+ * - payment method
+ * - cash/debit amounts
+ * - status
+ * - tire/product items
+ * - service items
+ * - inventory quantities
+ * - inventory movement logs
  */
 const updateInvoiceId = asyncHandler(async (req, res) => {
     const { id } = req.params;
-    const {
-        total_amount,
-        subtotal,
-        tax,
-        payment_method,
-        cash_amount,
-        debit_amount,
-    } = req.body;
-
     const client = await db.connect();
 
     try {
+        const {
+            customer_id,
+            total_amount,
+            subtotal,
+            tax,
+            payment_method,
+            cash_amount,
+            debit_amount,
+            status,
+            transactions,
+        } = req.body;
+
+        const updated_by = req.user?.id || req.body.created_by;
+
+        if (!updated_by) {
+            return res.status(401).json({
+                error: "Unauthorized",
+            });
+        }
+
+        if (
+            !customer_id ||
+            subtotal == null ||
+            !status ||
+            !Array.isArray(transactions)
+        ) {
+            return res.status(400).json({
+                error: "Invalid payload",
+            });
+        }
+
         await client.query("BEGIN");
+
+        const invoiceRes = await client.query(
+            `
+            SELECT *
+            FROM "Invoice"
+            WHERE id = $1
+              AND deleted_at IS NULL
+            `,
+            [id]
+        );
+
+        if (invoiceRes.rowCount === 0) {
+            await client.query("ROLLBACK");
+            return res.status(404).json({
+                error: "Invoice not found",
+            });
+        }
+
+        const oldTransactionsRes = await client.query(
+            `
+            SELECT *
+            FROM "Transaction"
+            WHERE invoice_id = $1
+              AND deleted_at IS NULL
+            `,
+            [id]
+        );
+
+        const oldTransactions = oldTransactionsRes.rows;
+
+        for (const oldTx of oldTransactions) {
+            if (oldTx.product_id && oldTx.quantity) {
+                await client.query(
+                    `
+                    UPDATE "Inventory"
+                    SET
+                        quantity = quantity + $1,
+                        updated_at = NOW()
+                    WHERE product_id = $2
+                    `,
+                    [oldTx.quantity, oldTx.product_id]
+                );
+
+                await client.query(
+                    `
+                    INSERT INTO "Inventory_movement" (
+                        product_id,
+                        quantity,
+                        created_at,
+                        reason,
+                        invoice_id
+                    )
+                    VALUES ($1, $2, NOW(), 'return', $3)
+                    `,
+                    [oldTx.product_id, oldTx.quantity, id]
+                );
+            }
+        }
 
         await client.query(
             `
-      UPDATE "Invoice"
-      SET
-        total_amount = $2,
-        subtotal = $3,
-        tax = $4,
-        payment_method = $5,
-        updated_at = NOW(),
-        status = 'finished',
-        cash_amount = $6,
-        debit_amount = $7
-      WHERE id = $1
-      `,
+            UPDATE "Transaction"
+            SET
+                deleted_at = NOW(),
+                updated_at = NOW()
+            WHERE invoice_id = $1
+              AND deleted_at IS NULL
+            `,
+            [id]
+        );
+
+        const updatedInvoiceRes = await client.query(
+            `
+            UPDATE "Invoice"
+            SET
+                customer_id = $2,
+                total_amount = $3,
+                subtotal = $4,
+                tax = $5,
+                payment_method = $6,
+                cash_amount = $7,
+                debit_amount = $8,
+                status = $9,
+                updated_at = NOW()
+            WHERE id = $1
+              AND deleted_at IS NULL
+            RETURNING *
+            `,
             [
                 id,
-                total_amount,
+                customer_id,
+                total_amount ?? null,
                 subtotal,
-                tax,
-                payment_method,
-                cash_amount,
-                debit_amount,
+                tax ?? null,
+                payment_method ?? null,
+                cash_amount ?? null,
+                debit_amount ?? null,
+                status,
             ]
         );
 
-        await client.query(
-            `
-      UPDATE "Transaction"
-      SET
-        payment_method = $1,
-        updated_at = NOW(),
-        status = 'finished'
-      WHERE invoice_id = $2
-      `,
-            [payment_method, id]
-        );
+        for (const tx of transactions) {
+            if (
+                tx.amount == null ||
+                !tx.type ||
+                !tx.category ||
+                tx.quantity == null
+            ) {
+                await client.query("ROLLBACK");
+                return res.status(400).json({
+                    error: "Invalid transaction payload",
+                });
+            }
+
+            if (tx.category === "Tire") {
+                if (!tx.product_id) {
+                    await client.query("ROLLBACK");
+                    return res.status(400).json({
+                        error: "Product ID is required for tire transactions",
+                    });
+                }
+
+                const inventoryRes = await client.query(
+                    `
+                    UPDATE "Inventory" i
+                    SET
+                        quantity = i.quantity - $1,
+                        updated_at = NOW()
+                    FROM "Product" p
+                    WHERE p.id = $2
+                      AND i.product_id = p.id
+                      AND p.deleted_at IS NULL
+                      AND i.quantity >= $1
+                    RETURNING
+                        p.id,
+                        i.quantity,
+                        p.price,
+                        p.cost,
+                        p.size,
+                        p.condition
+                    `,
+                    [tx.quantity, tx.product_id]
+                );
+
+                if (inventoryRes.rowCount === 0) {
+                    await client.query("ROLLBACK");
+                    return res.status(400).json({
+                        error: "Insufficient inventory",
+                    });
+                }
+
+                await client.query(
+                    `
+                    INSERT INTO "Transaction" (
+                        invoice_id,
+                        amount,
+                        description,
+                        created_at,
+                        type,
+                        category,
+                        created_by,
+                        payment_method,
+                        product_id,
+                        quantity,
+                        status
+                    )
+                    VALUES ($1, $2, $3, NOW(), $4, $5, $6, $7, $8, $9, $10)
+                    `,
+                    [
+                        id,
+                        tx.amount,
+                        tx.description || null,
+                        tx.type,
+                        tx.category,
+                        updated_by,
+                        payment_method || null,
+                        tx.product_id,
+                        tx.quantity,
+                        status,
+                    ]
+                );
+
+                await client.query(
+                    `
+                    INSERT INTO "Inventory_movement" (
+                        product_id,
+                        quantity,
+                        created_at,
+                        reason,
+                        invoice_id
+                    )
+                    VALUES ($1, $2, NOW(), 'sale', $3)
+                    `,
+                    [tx.product_id, tx.quantity, id]
+                );
+
+                if (
+                    inventoryRes.rows[0]?.condition === "SET" &&
+                    tx.quantity % 4 !== 0 &&
+                    typeof handleTireSet === "function"
+                ) {
+                    await handleTireSet(client, inventoryRes.rows[0]);
+                }
+            }
+
+            else if (tx.category === "Service") {
+                if (!tx.service_id) {
+                    await client.query("ROLLBACK");
+                    return res.status(400).json({
+                        error: "Service ID is required for service transactions",
+                    });
+                }
+
+                await client.query(
+                    `
+                    INSERT INTO "Transaction" (
+                        invoice_id,
+                        amount,
+                        description,
+                        created_at,
+                        type,
+                        category,
+                        created_by,
+                        payment_method,
+                        service_id,
+                        quantity,
+                        status
+                    )
+                    VALUES ($1, $2, $3, NOW(), $4, $5, $6, $7, $8, $9, $10)
+                    `,
+                    [
+                        id,
+                        tx.amount,
+                        tx.description || null,
+                        tx.type,
+                        tx.category,
+                        updated_by,
+                        payment_method || null,
+                        tx.service_id,
+                        tx.quantity,
+                        status,
+                    ]
+                );
+            }
+
+            else {
+                await client.query("ROLLBACK");
+                return res.status(400).json({
+                    error: `Unsupported transaction category: ${tx.category}`,
+                });
+            }
+        }
 
         await client.query("COMMIT");
 
-        return res.status(200).json({ success: true });
+        return res.status(200).json({
+            message: "Invoice updated successfully",
+            invoice: updatedInvoiceRes.rows[0],
+        });
     } catch (err) {
         await client.query("ROLLBACK");
-        console.error("Edit Invoice Payment Method error:", err);
+        console.error("Update invoice error:", err);
 
         return res.status(500).json({
-            error: "Failed to update invoice payment method",
+            error: "Failed to update invoice",
         });
     } finally {
         client.release();
