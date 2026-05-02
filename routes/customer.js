@@ -7,6 +7,8 @@ const {
     deleteCustomer,
     getCustomerSummary,
     getMonthlyCustomerSummary,
+    getCustomerByIdInvoices,
+    getCustomerById,
 } = require("../controllers/customer");
 
 const router = express.Router();
@@ -17,6 +19,7 @@ router.get("/summary", getCustomerSummary);
 
 router.get("/", getCustomers);
 router.get("/:id", getCustomerById);
+router.get("/:id/invoices", getCustomerByIdInvoices);
 router.post("/", createCustomer);
 // router.put("/:id", updateCustomer);
 router.delete("/:id", deleteCustomer);

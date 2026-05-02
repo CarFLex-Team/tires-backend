@@ -21,7 +21,7 @@ const getCustomers = asyncHandler(async (req, res) => {
 /**
  * GET /api/customers/:id
  */
-const getCustomerById = asyncHandler(async (req, res) => {
+const getCustomerByIdInvoices = asyncHandler(async (req, res) => {
     const { id } = req.params;
 
     const { rows } = await db.query(
@@ -227,9 +227,32 @@ const getMonthlyCustomerSummary = asyncHandler(async (req, res) => {
     return res.status(200).json(rows);
 });
 
+const getCustomerById = asyncHandler(async (req, res) => {
+    const { id } = req.params;
+
+    const { rows, rowCount } = await db.query(
+        `
+        SELECT *
+        FROM "Customer"
+        WHERE id = $1
+          AND deleted_at IS NULL
+        `,
+        [id]
+    );
+
+    if (rowCount === 0) {
+        return res.status(404).json({
+            error: "Customer not found",
+        });
+    }
+
+    return res.status(200).json(rows[0]);
+});
+
 module.exports = {
     getCustomers,
     getCustomerById,
+    getCustomerByIdInvoices,
     createCustomer,
     //  updateCustomer, 
     deleteCustomer,

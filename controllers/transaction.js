@@ -40,19 +40,14 @@ const getTransactions = asyncHandler(async (req, res) => {
 
     const { rows } = await db.query(
         `
-    SELECT
-      t.*,
-      s.name AS service_name,
-      p.name AS product_name,
-      u.name AS created_by_name
+     SELECT
+    t.*,
+    u.name AS created_by_name
     FROM "Transaction" t
-    LEFT JOIN "Service" s ON t.service_id = s.id
-    LEFT JOIN "Product" p ON t.product_id = p.id
     JOIN "User" u ON t.created_by = u.id
-    WHERE t.deleted_at IS NULL
-      AND t.status = 'finished'
-      ${whereClause}
-    ORDER BY t.created_at DESC
+    WHERE t.deleted_at IS NULL AND t.type = 'Expense'
+    ${whereClause}
+    ORDER BY t.created_at DESC;
     `,
         params
     );
@@ -107,12 +102,7 @@ const createTransaction = asyncHandler(async (req, res) => {
 
 
     if (
-        amount == null ||
-        !type ||
-        !category ||
-        !payment_method ||
-        !description ||
-        quantity == null
+        !type || !amount || !payment_method || !description
     ) {
         return res.status(400).json({
             error: "All fields are required",
@@ -121,20 +111,17 @@ const createTransaction = asyncHandler(async (req, res) => {
 
     const { rows } = await db.query(
         `
-    INSERT INTO "Transaction"
-      (amount, type, category, description, payment_method, product_id, service_id, quantity, created_by)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-    RETURNING *
+      INSERT INTO "Transaction" ( amount, type, description, payment_method, product_id, service_id,  created_by)
+      VALUES ($1, $2, $3, $4, $5, $6, $7)
+      RETURNING *
     `,
         [
             amount,
             type,
-            category,
             description,
             payment_method,
-            product_id || null,
-            service_id || null,
-            quantity,
+            product_id,
+            service_id,
             created_by,
         ]
     );
