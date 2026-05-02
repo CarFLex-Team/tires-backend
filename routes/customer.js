@@ -8,7 +8,6 @@ const {
     getCustomerSummary,
     getMonthlyCustomerSummary,
     getCustomerByIdInvoices,
-    getCustomerById,
 } = require("../controllers/customer");
 
 const router = express.Router();
